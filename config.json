@@ -1,5 +1,0 @@
-{
-    "initial_image_url": "https://api.pixelbattle.fun/pixels.png",
-    "websocket_uri": "wss://api.pixelbattle.fun/pixels/socket",
-    "ffmpeg_path": "C:\\ffmpeg\\bin\\ffmpeg.exe"
-}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package molten.proto.record;
+option go_package = "github.com/pixelate-it/molten/proto";
+
+message PixelData {
+    uint32 id = 1;
+    uint32 color = 2;
+    optional uint64 author = 3;
+    optional uint64 tag = 4;
+}
