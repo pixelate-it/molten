@@ -4,7 +4,7 @@
 // 	protoc        v7.34.1
 // source: record.proto
 
-package proto
+package ore
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -77,6 +77,8 @@ type Keyframe struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Pixels        []*PixelData           `protobuf:"bytes,2,rep,name=pixels,proto3" json:"pixels,omitempty"`
+	Width         *uint32                `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
+	Height        *uint32                `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -125,80 +127,36 @@ func (x *Keyframe) GetPixels() []*PixelData {
 	return nil
 }
 
-type Resize struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Width         uint32                 `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`
-	Height        uint32                 `protobuf:"varint,3,opt,name=height,proto3" json:"height,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Resize) Reset() {
-	*x = Resize{}
-	mi := &file_record_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Resize) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Resize) ProtoMessage() {}
-
-func (x *Resize) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Resize.ProtoReflect.Descriptor instead.
-func (*Resize) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *Resize) GetTimestamp() uint64 {
-	if x != nil {
-		return x.Timestamp
+func (x *Keyframe) GetWidth() uint32 {
+	if x != nil && x.Width != nil {
+		return *x.Width
 	}
 	return 0
 }
 
-func (x *Resize) GetWidth() uint32 {
-	if x != nil {
-		return x.Width
-	}
-	return 0
-}
-
-func (x *Resize) GetHeight() uint32 {
-	if x != nil {
-		return x.Height
+func (x *Keyframe) GetHeight() uint32 {
+	if x != nil && x.Height != nil {
+		return *x.Height
 	}
 	return 0
 }
 
 type Header struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	Width         uint32                 `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`
-	Height        uint32                 `protobuf:"varint,3,opt,name=height,proto3" json:"height,omitempty"`
-	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
-	StartedAt     uint64                 `protobuf:"varint,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	// reserved 2, 3;
+	// reserved "width", "height";
+	Width         *uint32 `protobuf:"varint,2,opt,name=width,proto3,oneof" json:"width,omitempty"`
+	Height        *uint32 `protobuf:"varint,3,opt,name=height,proto3,oneof" json:"height,omitempty"`
+	Name          string  `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	StartedAt     uint64  `protobuf:"varint,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Header) Reset() {
 	*x = Header{}
-	mi := &file_record_proto_msgTypes[3]
+	mi := &file_record_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -210,7 +168,7 @@ func (x *Header) String() string {
 func (*Header) ProtoMessage() {}
 
 func (x *Header) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[3]
+	mi := &file_record_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -223,7 +181,7 @@ func (x *Header) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Header.ProtoReflect.Descriptor instead.
 func (*Header) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{3}
+	return file_record_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Header) GetVersion() uint32 {
@@ -234,15 +192,15 @@ func (x *Header) GetVersion() uint32 {
 }
 
 func (x *Header) GetWidth() uint32 {
-	if x != nil {
-		return x.Width
+	if x != nil && x.Width != nil {
+		return *x.Width
 	}
 	return 0
 }
 
 func (x *Header) GetHeight() uint32 {
-	if x != nil {
-		return x.Height
+	if x != nil && x.Height != nil {
+		return *x.Height
 	}
 	return 0
 }
@@ -266,7 +224,6 @@ type RecordingChunk struct {
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*RecordingChunk_Header
-	//	*RecordingChunk_Resize
 	//	*RecordingChunk_Keyframe
 	//	*RecordingChunk_Delta
 	Payload       isRecordingChunk_Payload `protobuf_oneof:"payload"`
@@ -276,7 +233,7 @@ type RecordingChunk struct {
 
 func (x *RecordingChunk) Reset() {
 	*x = RecordingChunk{}
-	mi := &file_record_proto_msgTypes[4]
+	mi := &file_record_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -288,7 +245,7 @@ func (x *RecordingChunk) String() string {
 func (*RecordingChunk) ProtoMessage() {}
 
 func (x *RecordingChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[4]
+	mi := &file_record_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -301,7 +258,7 @@ func (x *RecordingChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordingChunk.ProtoReflect.Descriptor instead.
 func (*RecordingChunk) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{4}
+	return file_record_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RecordingChunk) GetPayload() isRecordingChunk_Payload {
@@ -315,15 +272,6 @@ func (x *RecordingChunk) GetHeader() *Header {
 	if x != nil {
 		if x, ok := x.Payload.(*RecordingChunk_Header); ok {
 			return x.Header
-		}
-	}
-	return nil
-}
-
-func (x *RecordingChunk) GetResize() *Resize {
-	if x != nil {
-		if x, ok := x.Payload.(*RecordingChunk_Resize); ok {
-			return x.Resize
 		}
 	}
 	return nil
@@ -355,10 +303,6 @@ type RecordingChunk_Header struct {
 	Header *Header `protobuf:"bytes,1,opt,name=header,proto3,oneof"`
 }
 
-type RecordingChunk_Resize struct {
-	Resize *Resize `protobuf:"bytes,2,opt,name=resize,proto3,oneof"`
-}
-
 type RecordingChunk_Keyframe struct {
 	Keyframe *Keyframe `protobuf:"bytes,3,opt,name=keyframe,proto3,oneof"`
 }
@@ -369,8 +313,6 @@ type RecordingChunk_Delta struct {
 
 func (*RecordingChunk_Header) isRecordingChunk_Payload() {}
 
-func (*RecordingChunk_Resize) isRecordingChunk_Payload() {}
-
 func (*RecordingChunk_Keyframe) isRecordingChunk_Payload() {}
 
 func (*RecordingChunk_Delta) isRecordingChunk_Payload() {}
@@ -379,30 +321,32 @@ var File_record_proto protoreflect.FileDescriptor
 
 const file_record_proto_rawDesc = "" +
 	"\n" +
-	"\frecord.proto\x12\x13molten.proto.record\x1a\x10pixel_data.proto\"_\n" +
+	"\frecord.proto\x12\n" +
+	"molten.ore\x1a\x10pixel_data.proto\"V\n" +
 	"\x05Delta\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x128\n" +
-	"\achanges\x18\x02 \x03(\v2\x1e.molten.proto.record.PixelDataR\achanges\"`\n" +
+	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12/\n" +
+	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"\xa4\x01\n" +
 	"\bKeyframe\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x126\n" +
-	"\x06pixels\x18\x02 \x03(\v2\x1e.molten.proto.record.PixelDataR\x06pixels\"T\n" +
-	"\x06Resize\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12\x14\n" +
-	"\x05width\x18\x02 \x01(\rR\x05width\x12\x16\n" +
-	"\x06height\x18\x03 \x01(\rR\x06height\"\x83\x01\n" +
+	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12-\n" +
+	"\x06pixels\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\x12\x19\n" +
+	"\x05width\x18\x03 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
+	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01B\b\n" +
+	"\x06_widthB\t\n" +
+	"\a_height\"\xa2\x01\n" +
 	"\x06Header\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\rR\aversion\x12\x14\n" +
-	"\x05width\x18\x02 \x01(\rR\x05width\x12\x16\n" +
-	"\x06height\x18\x03 \x01(\rR\x06height\x12\x12\n" +
+	"\aversion\x18\x01 \x01(\rR\aversion\x12\x19\n" +
+	"\x05width\x18\x02 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
+	"\x06height\x18\x03 \x01(\rH\x01R\x06height\x88\x01\x01\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"started_at\x18\x05 \x01(\x04R\tstartedAt\"\xfa\x01\n" +
-	"\x0eRecordingChunk\x125\n" +
-	"\x06header\x18\x01 \x01(\v2\x1b.molten.proto.record.HeaderH\x00R\x06header\x125\n" +
-	"\x06resize\x18\x02 \x01(\v2\x1b.molten.proto.record.ResizeH\x00R\x06resize\x12;\n" +
-	"\bkeyframe\x18\x03 \x01(\v2\x1d.molten.proto.record.KeyframeH\x00R\bkeyframe\x122\n" +
-	"\x05delta\x18\x04 \x01(\v2\x1a.molten.proto.record.DeltaH\x00R\x05deltaB\t\n" +
-	"\apayloadB%Z#github.com/pixelate-it/molten/protob\x06proto3"
+	"started_at\x18\x05 \x01(\x04R\tstartedAtB\b\n" +
+	"\x06_widthB\t\n" +
+	"\a_height\"\xae\x01\n" +
+	"\x0eRecordingChunk\x12,\n" +
+	"\x06header\x18\x01 \x01(\v2\x12.molten.ore.HeaderH\x00R\x06header\x122\n" +
+	"\bkeyframe\x18\x03 \x01(\v2\x14.molten.ore.KeyframeH\x00R\bkeyframe\x12)\n" +
+	"\x05delta\x18\x04 \x01(\v2\x11.molten.ore.DeltaH\x00R\x05deltaB\t\n" +
+	"\apayloadJ\x04\b\x02\x10\x03B#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (
 	file_record_proto_rawDescOnce sync.Once
@@ -416,27 +360,25 @@ func file_record_proto_rawDescGZIP() []byte {
 	return file_record_proto_rawDescData
 }
 
-var file_record_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_record_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_record_proto_goTypes = []any{
-	(*Delta)(nil),          // 0: molten.proto.record.Delta
-	(*Keyframe)(nil),       // 1: molten.proto.record.Keyframe
-	(*Resize)(nil),         // 2: molten.proto.record.Resize
-	(*Header)(nil),         // 3: molten.proto.record.Header
-	(*RecordingChunk)(nil), // 4: molten.proto.record.RecordingChunk
-	(*PixelData)(nil),      // 5: molten.proto.record.PixelData
+	(*Delta)(nil),          // 0: molten.ore.Delta
+	(*Keyframe)(nil),       // 1: molten.ore.Keyframe
+	(*Header)(nil),         // 2: molten.ore.Header
+	(*RecordingChunk)(nil), // 3: molten.ore.RecordingChunk
+	(*PixelData)(nil),      // 4: molten.ore.PixelData
 }
 var file_record_proto_depIdxs = []int32{
-	5, // 0: molten.proto.record.Delta.changes:type_name -> molten.proto.record.PixelData
-	5, // 1: molten.proto.record.Keyframe.pixels:type_name -> molten.proto.record.PixelData
-	3, // 2: molten.proto.record.RecordingChunk.header:type_name -> molten.proto.record.Header
-	2, // 3: molten.proto.record.RecordingChunk.resize:type_name -> molten.proto.record.Resize
-	1, // 4: molten.proto.record.RecordingChunk.keyframe:type_name -> molten.proto.record.Keyframe
-	0, // 5: molten.proto.record.RecordingChunk.delta:type_name -> molten.proto.record.Delta
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	4, // 0: molten.ore.Delta.changes:type_name -> molten.ore.PixelData
+	4, // 1: molten.ore.Keyframe.pixels:type_name -> molten.ore.PixelData
+	2, // 2: molten.ore.RecordingChunk.header:type_name -> molten.ore.Header
+	1, // 3: molten.ore.RecordingChunk.keyframe:type_name -> molten.ore.Keyframe
+	0, // 4: molten.ore.RecordingChunk.delta:type_name -> molten.ore.Delta
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_record_proto_init() }
@@ -445,9 +387,10 @@ func file_record_proto_init() {
 		return
 	}
 	file_pixel_data_proto_init()
-	file_record_proto_msgTypes[4].OneofWrappers = []any{
+	file_record_proto_msgTypes[1].OneofWrappers = []any{}
+	file_record_proto_msgTypes[2].OneofWrappers = []any{}
+	file_record_proto_msgTypes[3].OneofWrappers = []any{
 		(*RecordingChunk_Header)(nil),
-		(*RecordingChunk_Resize)(nil),
 		(*RecordingChunk_Keyframe)(nil),
 		(*RecordingChunk_Delta)(nil),
 	}
@@ -457,7 +400,7 @@ func file_record_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_record_proto_rawDesc), len(file_record_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

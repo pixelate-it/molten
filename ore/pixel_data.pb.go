@@ -4,7 +4,7 @@
 // 	protoc        v7.34.1
 // source: pixel_data.proto
 
-package proto
+package ore
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -93,14 +93,15 @@ var File_pixel_data_proto protoreflect.FileDescriptor
 
 const file_pixel_data_proto_rawDesc = "" +
 	"\n" +
-	"\x10pixel_data.proto\x12\x13molten.proto.record\"x\n" +
+	"\x10pixel_data.proto\x12\n" +
+	"molten.ore\"x\n" +
 	"\tPixelData\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x14\n" +
 	"\x05color\x18\x02 \x01(\rR\x05color\x12\x1b\n" +
 	"\x06author\x18\x03 \x01(\x04H\x00R\x06author\x88\x01\x01\x12\x15\n" +
 	"\x03tag\x18\x04 \x01(\x04H\x01R\x03tag\x88\x01\x01B\t\n" +
 	"\a_authorB\x06\n" +
-	"\x04_tagB%Z#github.com/pixelate-it/molten/protob\x06proto3"
+	"\x04_tagB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (
 	file_pixel_data_proto_rawDescOnce sync.Once
@@ -116,7 +117,7 @@ func file_pixel_data_proto_rawDescGZIP() []byte {
 
 var file_pixel_data_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_pixel_data_proto_goTypes = []any{
-	(*PixelData)(nil), // 0: molten.proto.record.PixelData
+	(*PixelData)(nil), // 0: molten.ore.PixelData
 }
 var file_pixel_data_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type

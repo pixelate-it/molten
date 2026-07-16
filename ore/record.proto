@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-package molten.proto.record;
-option go_package = "github.com/pixelate-it/molten/proto";
+package molten.ore;
+option go_package = "github.com/pixelate-it/molten/ore";
 
 import "pixel_data.proto";
 
@@ -13,26 +13,24 @@ message Delta {
 message Keyframe {
     uint64 timestamp = 1;
     repeated PixelData pixels = 2;
-}
-
-message Resize {
-    uint64 timestamp = 1;
-    uint32 width = 2;
-    uint32 height = 3;
+    optional uint32 width = 3;
+    optional uint32 height = 4;
 }
 
 message Header {
     uint32 version = 1;
-    reserved 2, 3;
-    reserved "width", "height";
+    //reserved 2, 3;
+    //reserved "width", "height";
+    optional uint32 width = 2;
+    optional uint32 height = 3;
     string name = 4;
     uint64 started_at = 5;
 }
 
 message RecordingChunk {
+    reserved 2;
     oneof payload {
         Header header = 1;
-        Resize resize = 2;
         Keyframe keyframe = 3;
         Delta delta = 4;
     }
