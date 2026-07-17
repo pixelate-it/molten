@@ -11,12 +11,12 @@ import (
 var (
 	VersionYear  byte = 26
 	VersionMonth byte = 7
-	VersionDay   byte = 16
+	VersionDay   byte = 17
 )
 
 var (
 	build    = "dev"
-	codename = "-"
+	codename = "Refined Glowstone"
 	intro    = "Pixel Battle canvas recording format & renderer"
 )
 

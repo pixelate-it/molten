@@ -5,19 +5,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 
-	ore "github.com/pixelate-it/molten/ore"
 	"github.com/pixelate-it/molten/internal/canvas"
-	"github.com/pixelate-it/molten/internal/ffmpeg"
 	"github.com/pixelate-it/molten/internal/format"
 	"github.com/pixelate-it/molten/internal/render"
+	"github.com/pixelate-it/molten/internal/segment"
+	ore "github.com/pixelate-it/molten/ore"
 )
 
 func runRender(args []string) error {
 	fs := flag.NewFlagSet("render", flag.ContinueOnError)
-	inputPath := fs.String("in", "", "path to .mltn file (required)")
-	outputPath := fs.String("out", "out.mp4", "output video path")
+	inputPath := fs.String("in", "", "path to a recording file, .mltn or legacy .pbr (required)")
+	outputPath := fs.String("out", "out.mp4", "output video path (numbered per-segment if the canvas was resized)")
 	fps := fs.Int("fps", 30, "output video fps")
 	mode := fs.String("mode", "time", "frame emission mode: time | activity")
 	speed := fs.Float64("speed", 3600, "recorded-time speedup factor (mode=time only)")
@@ -35,13 +36,15 @@ func runRender(args []string) error {
 		return errUsage
 	}
 
+	log.Printf("opening %s", *inputPath)
+
 	f, err := os.Open(*inputPath)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
 	}
 	defer f.Close()
 
-	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024));
+	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
 	header, initialKf, err := format.ReadHeader(reader)
 	if err != nil {
@@ -52,55 +55,40 @@ func runRender(args []string) error {
 	if !ok {
 		return format.ErrMissingInitialKeyframe
 	}
+	log.Printf("initial canvas size: %dx%d", width, height)
 
 	state := canvas.NewState()
 	state.Resize(width, height)
 	for _, p := range initialKf.Pixels {
 		state.ApplySinglePixel(p)
-}
+	}
 
-	var enc *ffmpeg.PipeTarget
-	defer func() {
-		if enc != nil {
-			_ = enc.Close()
-		}
-	}()
+	mgr := segment.NewManager(*outputPath, *fps)
+	if err := mgr.StartSegment(int(width), int(height)); err != nil {
+		return err
+	}
+	defer mgr.Close()
 
 	emit := func() error {
-		if enc == nil {
-			e, err := ffmpeg.StartFileEncode(int(state.Width), int(state.Height), *fps, *outputPath)
-			if err != nil {
-				return fmt.Errorf("start ffmpeg: %w", err)
-			}
-			enc = e
-		}
-		img := render.Frame(state)
-		if _, err := enc.Stdin.Write(img.Pix); err != nil {
-			return fmt.Errorf("write frame: %w", err)
-		}
-		return nil
+		return mgr.WriteFrame(render.Frame(state))
 	}
 
 	var runErr error
 	switch *mode {
 	case "time":
-		runErr = renderTimeMode(reader, state, initialKf, *speed, *fps, emit)
+		runErr = renderTimeMode(reader, state, initialKf, *speed, *fps, mgr, emit)
 	case "activity":
-		runErr = renderActivityMode(reader, state, initialKf, *step, emit)
+		runErr = renderActivityMode(reader, state, initialKf, *step, mgr, emit)
 	}
 	if runErr != nil {
 		return runErr
 	}
 
-	if enc != nil {
-		err := enc.Close()
-		enc = nil
-		if err != nil {
-			return fmt.Errorf("close ffmpeg: %w", err)
-		}
+	if err := mgr.Close(); err != nil {
+		return fmt.Errorf("close last segment: %w", err)
 	}
 
-	fmt.Printf("Rendered %s (mode=%s)\n", *outputPath, *mode)
+	log.Printf("done")
 	return nil
 }
 
@@ -110,6 +98,7 @@ func renderTimeMode(
 	initialKf *ore.Keyframe,
 	speed float64,
 	fps int,
+	mgr *segment.Manager,
 	emit func() error,
 ) error {
 	intervalMs := (1000.0 / float64(fps)) * speed
@@ -139,6 +128,7 @@ func renderTimeMode(
 		return err
 	}
 
+	chunkCount := 0
 	for {
 		chunk, err := reader.Next()
 		if err != nil {
@@ -147,14 +137,27 @@ func renderTimeMode(
 			}
 			return fmt.Errorf("read chunk: %w", err)
 		}
+		chunkCount++
+		if chunkCount%2000 == 0 {
+			log.Printf("processed %d chunks...", chunkCount)
+		}
 
 		switch {
 		case chunk.GetKeyframe() != nil:
 			kf := chunk.GetKeyframe()
-			state.ApplyKeyframe(kf)
+			resized := state.ApplyKeyframe(kf)
+			if resized {
+				if err := mgr.StartSegment(int(state.Width), int(state.Height)); err != nil {
+					return err
+				}
+				if err := emit(); err != nil {
+					return err
+				}
+			}
 			if err := advance(kf.Timestamp); err != nil {
 				return err
 			}
+
 		case chunk.GetDelta() != nil:
 			d := chunk.GetDelta()
 			state.ApplyDelta(d)
@@ -170,6 +173,7 @@ func renderActivityMode(
 	state *canvas.State,
 	initialKf *ore.Keyframe,
 	step int,
+	mgr *segment.Manager,
 	emit func() error,
 ) error {
 	if step < 1 {
@@ -197,6 +201,7 @@ func renderActivityMode(
 		}
 	}
 
+	chunkCount := 0
 	for {
 		chunk, err := reader.Next()
 		if err != nil {
@@ -205,15 +210,22 @@ func renderActivityMode(
 			}
 			return fmt.Errorf("read chunk: %w", err)
 		}
+		chunkCount++
+		if chunkCount%2000 == 0 {
+			log.Printf("processed %d chunks...", chunkCount)
+		}
 
 		switch {
 		case chunk.GetKeyframe() != nil:
 			kf := chunk.GetKeyframe()
-			if kf.Width != nil && kf.Height != nil {
-				state.Resize(*kf.Width, *kf.Height)
-			}
-			for _, p := range kf.Pixels {
-				state.ApplySinglePixel(p)
+			resized := state.ApplyKeyframe(kf)
+			if resized {
+				if err := mgr.StartSegment(int(state.Width), int(state.Height)); err != nil {
+					return err
+				}
+				if err := emit(); err != nil {
+					return err
+				}
 			}
 
 		case chunk.GetDelta() != nil:

@@ -19,6 +19,7 @@ func StartFileEncode(width, height, fps int, outputPath string) (*PipeTarget, er
 		"-video_size", fmt.Sprintf("%dx%d", width, height),
 		"-framerate", fmt.Sprintf("%d", fps),
 		"-i", "-",
+		"-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
 		"-c:v", "libx264",
 		"-preset", "medium",
 		"-pix_fmt", "yuv420p",

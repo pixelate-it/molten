@@ -50,13 +50,15 @@ func (s *State) applyPixel(p *ore.PixelData) {
 	s.img.Pix[off+3] = 0xff
 }
 
-func (s *State) ApplyKeyframe(kf *ore.Keyframe) {
+func (s *State) ApplyKeyframe(kf *ore.Keyframe) (resized bool) {
 	if kf.Width != nil && kf.Height != nil {
 		s.Resize(*kf.Width, *kf.Height)
+		resized = true
 	}
 	for _, p := range kf.Pixels {
 		s.applyPixel(p)
 	}
+	return resized
 }
 
 func (s *State) ApplyDelta(d *ore.Delta) {
