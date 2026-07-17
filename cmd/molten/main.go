@@ -50,7 +50,7 @@ func run(args []string) error {
 }
 
 func printUsage() {
-	fmt.Println(`Molten - PixelBattle canvas recording format & renderer.
+	fmt.Println(`Molten - High-performance, protobuf-based stream format for recording and broadcasting real-time pixel grids and collaborative canvases
 
 Usage:
   molten <command> [flags]
