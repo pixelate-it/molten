@@ -146,10 +146,19 @@ type Header struct {
 	Version uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	// reserved 2, 3;
 	// reserved "width", "height";
-	Width         *uint32 `protobuf:"varint,2,opt,name=width,proto3,oneof" json:"width,omitempty"`
-	Height        *uint32 `protobuf:"varint,3,opt,name=height,proto3,oneof" json:"height,omitempty"`
-	Name          string  `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
-	StartedAt     uint64  `protobuf:"varint,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// record.v1 only - the initial size now lives on the first Keyframe, which
+	// is also the only thing that can express a mid-recording resize.
+	Width  *uint32 `protobuf:"varint,2,opt,name=width,proto3,oneof" json:"width,omitempty"`
+	Height *uint32 `protobuf:"varint,3,opt,name=height,proto3,oneof" json:"height,omitempty"`
+	// Season name.
+	Name      string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	StartedAt uint64 `protobuf:"varint,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// Parameters of the game this recording belongs to. Everything that is
+	// fixed for the whole recording goes here; anything that can change
+	// mid-recording (i.e. the canvas size) does not.
+	GameId        *uint64 `protobuf:"varint,6,opt,name=game_id,json=gameId,proto3,oneof" json:"game_id,omitempty"`
+	Cooldown      *uint32 `protobuf:"varint,7,opt,name=cooldown,proto3,oneof" json:"cooldown,omitempty"`
+	EndsAt        *uint64 `protobuf:"varint,8,opt,name=ends_at,json=endsAt,proto3,oneof" json:"ends_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -215,6 +224,27 @@ func (x *Header) GetName() string {
 func (x *Header) GetStartedAt() uint64 {
 	if x != nil {
 		return x.StartedAt
+	}
+	return 0
+}
+
+func (x *Header) GetGameId() uint64 {
+	if x != nil && x.GameId != nil {
+		return *x.GameId
+	}
+	return 0
+}
+
+func (x *Header) GetCooldown() uint32 {
+	if x != nil && x.Cooldown != nil {
+		return *x.Cooldown
+	}
+	return 0
+}
+
+func (x *Header) GetEndsAt() uint64 {
+	if x != nil && x.EndsAt != nil {
+		return *x.EndsAt
 	}
 	return 0
 }
@@ -332,16 +362,24 @@ const file_record_proto_rawDesc = "" +
 	"\x05width\x18\x03 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
 	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01B\b\n" +
 	"\x06_widthB\t\n" +
-	"\a_height\"\xa2\x01\n" +
+	"\a_height\"\xa4\x02\n" +
 	"\x06Header\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x19\n" +
 	"\x05width\x18\x02 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
 	"\x06height\x18\x03 \x01(\rH\x01R\x06height\x88\x01\x01\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"started_at\x18\x05 \x01(\x04R\tstartedAtB\b\n" +
+	"started_at\x18\x05 \x01(\x04R\tstartedAt\x12\x1c\n" +
+	"\agame_id\x18\x06 \x01(\x04H\x02R\x06gameId\x88\x01\x01\x12\x1f\n" +
+	"\bcooldown\x18\a \x01(\rH\x03R\bcooldown\x88\x01\x01\x12\x1c\n" +
+	"\aends_at\x18\b \x01(\x04H\x04R\x06endsAt\x88\x01\x01B\b\n" +
 	"\x06_widthB\t\n" +
-	"\a_height\"\xae\x01\n" +
+	"\a_heightB\n" +
+	"\n" +
+	"\b_game_idB\v\n" +
+	"\t_cooldownB\n" +
+	"\n" +
+	"\b_ends_at\"\xae\x01\n" +
 	"\x0eRecordingChunk\x12,\n" +
 	"\x06header\x18\x01 \x01(\v2\x12.molten.ore.HeaderH\x00R\x06header\x122\n" +
 	"\bkeyframe\x18\x03 \x01(\v2\x14.molten.ore.KeyframeH\x00R\bkeyframe\x12)\n" +

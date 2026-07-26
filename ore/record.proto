@@ -21,10 +21,20 @@ message Header {
     uint32 version = 1;
     //reserved 2, 3;
     //reserved "width", "height";
+    // record.v1 only - the initial size now lives on the first Keyframe, which
+    // is also the only thing that can express a mid-recording resize.
     optional uint32 width = 2;
     optional uint32 height = 3;
+    // Season name.
     string name = 4;
     uint64 started_at = 5;
+
+    // Parameters of the game this recording belongs to. Everything that is
+    // fixed for the whole recording goes here; anything that can change
+    // mid-recording (i.e. the canvas size) does not.
+    optional uint64 game_id = 6;
+    optional uint32 cooldown = 7;
+    optional uint64 ends_at = 8;
 }
 
 message RecordingChunk {

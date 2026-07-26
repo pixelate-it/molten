@@ -82,6 +82,15 @@ func runInfo(args []string) error {
 	fmt.Printf("Version:       %d\n", header.Version)
 	fmt.Printf("Name:          %s\n", header.Name)
 	fmt.Printf("Started at:    %d\n", header.StartedAt)
+	if header.GameId != nil {
+		fmt.Printf("Game:          %d\n", *header.GameId)
+	}
+	if header.Cooldown != nil {
+		fmt.Printf("Cooldown:      %dms\n", *header.Cooldown)
+	}
+	if header.EndsAt != nil {
+		fmt.Printf("Scheduled end: %d\n", *header.EndsAt)
+	}
 	fmt.Printf("Initial size:  %dx%d\n", width, height)
 	fmt.Printf("Keyframes:     %d (excluding initial)\n", keyframes)
 	fmt.Printf("Deltas:        %d\n", deltas)
