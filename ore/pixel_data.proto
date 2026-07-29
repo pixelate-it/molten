@@ -8,4 +8,21 @@ message PixelData {
     uint32 color = 2;
     optional uint64 author = 3;
     optional uint64 tag = 4;
+
+    // Milliseconds *before* the enclosing chunk's timestamp that this pixel
+    // was actually placed.
+    //
+    // A delta is written once per flush and carries every pixel that changed
+    // since the last one, so its own timestamp is the flush - not the moment
+    // any given pixel was painted. Without this a time-based renderer applies
+    // a whole flush window at once, and every pixel in it shares one instant.
+    //
+    // Relative rather than absolute on purpose: the value is bounded by the
+    // flush interval, so it costs 2-3 bytes as a varint where an absolute
+    // epoch-ms uint64 costs 7 - and the top 40 bits of that would be identical
+    // for every pixel in the file.
+    //
+    // Unset means "no better information than the chunk's own timestamp",
+    // which is what every recording written before this field looks like.
+    optional uint32 offset = 5;
 }

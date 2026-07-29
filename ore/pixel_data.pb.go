@@ -22,11 +22,27 @@ const (
 )
 
 type PixelData struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Color         uint32                 `protobuf:"varint,2,opt,name=color,proto3" json:"color,omitempty"`
-	Author        *uint64                `protobuf:"varint,3,opt,name=author,proto3,oneof" json:"author,omitempty"`
-	Tag           *uint64                `protobuf:"varint,4,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Id     uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Color  uint32                 `protobuf:"varint,2,opt,name=color,proto3" json:"color,omitempty"`
+	Author *uint64                `protobuf:"varint,3,opt,name=author,proto3,oneof" json:"author,omitempty"`
+	Tag    *uint64                `protobuf:"varint,4,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
+	// Milliseconds *before* the enclosing chunk's timestamp that this pixel
+	// was actually placed.
+	//
+	// A delta is written once per flush and carries every pixel that changed
+	// since the last one, so its own timestamp is the flush - not the moment
+	// any given pixel was painted. Without this a time-based renderer applies
+	// a whole flush window at once, and every pixel in it shares one instant.
+	//
+	// Relative rather than absolute on purpose: the value is bounded by the
+	// flush interval, so it costs 2-3 bytes as a varint where an absolute
+	// epoch-ms uint64 costs 7 - and the top 40 bits of that would be identical
+	// for every pixel in the file.
+	//
+	// Unset means "no better information than the chunk's own timestamp",
+	// which is what every recording written before this field looks like.
+	Offset        *uint32 `protobuf:"varint,5,opt,name=offset,proto3,oneof" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -89,19 +105,28 @@ func (x *PixelData) GetTag() uint64 {
 	return 0
 }
 
+func (x *PixelData) GetOffset() uint32 {
+	if x != nil && x.Offset != nil {
+		return *x.Offset
+	}
+	return 0
+}
+
 var File_pixel_data_proto protoreflect.FileDescriptor
 
 const file_pixel_data_proto_rawDesc = "" +
 	"\n" +
 	"\x10pixel_data.proto\x12\n" +
-	"molten.ore\"x\n" +
+	"molten.ore\"\xa0\x01\n" +
 	"\tPixelData\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x14\n" +
 	"\x05color\x18\x02 \x01(\rR\x05color\x12\x1b\n" +
 	"\x06author\x18\x03 \x01(\x04H\x00R\x06author\x88\x01\x01\x12\x15\n" +
-	"\x03tag\x18\x04 \x01(\x04H\x01R\x03tag\x88\x01\x01B\t\n" +
+	"\x03tag\x18\x04 \x01(\x04H\x01R\x03tag\x88\x01\x01\x12\x1b\n" +
+	"\x06offset\x18\x05 \x01(\rH\x02R\x06offset\x88\x01\x01B\t\n" +
 	"\a_authorB\x06\n" +
-	"\x04_tagB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
+	"\x04_tagB\t\n" +
+	"\a_offsetB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (
 	file_pixel_data_proto_rawDescOnce sync.Once
