@@ -10,14 +10,14 @@ import (
 
 var (
 	VersionYear  byte = 26
-	VersionMonth byte = 7
-	VersionDay   byte = 17
+	VersionMonth byte = 8
+	VersionDay   byte = 1
 )
 
 var (
 	build    = "dev"
-	codename = "Refined Glowstone"
-	intro    = "Pixel Battle canvas recording format & renderer"
+	codename = "Flawless Crystal"
+	intro    = "High-performance, protobuf-based stream format for recording and broadcasting real-time pixel grids and collaborative canvases"
 )
 
 func init() {
