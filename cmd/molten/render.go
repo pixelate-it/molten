@@ -16,6 +16,22 @@ import (
 	ore "github.com/pixelate-it/molten/ore"
 )
 
+// libx264's ceiling on either axis. A render that exceeds it fails inside
+// ffmpeg, after every frame has already been piped.
+const maxEncodeDimension = 8192
+
+// stringList collects a flag given more than once, so each ffmpeg argument
+// arrives as its own token and nothing has to be split on spaces - a filter
+// expression is allowed to contain them.
+type stringList []string
+
+func (s *stringList) String() string { return fmt.Sprint(*s) }
+
+func (s *stringList) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
 func runRender(args []string) error {
 	fs := flag.NewFlagSet("render", flag.ContinueOnError)
 	inputPath := fs.String("in", "", "path to a recording file, .mltn or legacy .pbr (required)")
@@ -24,12 +40,19 @@ func runRender(args []string) error {
 	mode := fs.String("mode", "time", "frame emission mode: time | activity")
 	speed := fs.Float64("speed", 3600, "recorded-time speedup factor (mode=time only)")
 	step := fs.Int("step", 50, "individual pixel changes per emitted frame (mode=activity only)")
+	scale := fs.Int("scale", 1, "magnify the output by this whole-number factor, nearest-neighbour (1 = canvas size)")
+	var extraArgs stringList
+	fs.Var(&extraArgs, "ffmpeg", "extra ffmpeg output argument, repeatable: -ffmpeg -crf -ffmpeg 18")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if *inputPath == "" {
 		fmt.Fprintln(os.Stderr, "render: -in is required")
+		return errUsage
+	}
+	if *scale < 1 {
+		fmt.Fprintf(os.Stderr, "render: -scale must be at least 1, got %d\n", *scale)
 		return errUsage
 	}
 	if *mode != "time" && *mode != "activity" {
@@ -64,7 +87,23 @@ func runRender(args []string) error {
 		state.ApplySinglePixel(p)
 	}
 
-	mgr := segment.NewManager(*outputPath, *fps)
+	mgr := segment.NewManager(*outputPath, *fps).
+		WithEncodeOptions(*scale, extraArgs)
+
+	/* A canvas can be tiny and the factor is whatever was asked for, so this is
+	 * reachable by accident. libx264 refuses beyond 8192 on either axis, and it
+	 * refuses at the end of a render rather than the start - which, for a
+	 * season that takes minutes to replay, is a long wait for a failure that
+	 * was knowable up front. */
+	if outW, outH := int(width)*(*scale), int(height)*(*scale); outW > maxEncodeDimension || outH > maxEncodeDimension {
+		fmt.Fprintf(
+			os.Stderr,
+			"render: -scale %d gives a %dx%d video, past the %d limit libx264 will encode\n",
+			*scale, outW, outH, maxEncodeDimension,
+		)
+		return errUsage
+	}
+
 	if err := mgr.StartSegment(int(width), int(height)); err != nil {
 		return err
 	}
