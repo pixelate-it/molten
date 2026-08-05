@@ -11,12 +11,12 @@ import (
 var (
 	VersionYear  byte = 26
 	VersionMonth byte = 8
-	VersionDay   byte = 1
+	VersionDay   byte = 5
 )
 
 var (
 	build    = "dev"
-	codename = "Flawless Crystal"
+	codename = "Precise Clock"
 	intro    = "High-performance, protobuf-based stream format for recording and broadcasting real-time pixel grids and collaborative canvases"
 )
 

@@ -16,7 +16,7 @@
             {
                 packages.default = pkgs.buildGoModule {
                     pname = "molten";
-                    version = "26.8.1";
+                    version = "26.8.5";
 
                     src = ./.;
 
