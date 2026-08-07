@@ -1,4 +1,4 @@
-package main
+package format
 
 import (
 	"testing"
@@ -27,7 +27,7 @@ func TestPlacementOrderSortsByOffset(t *testing.T) {
 		},
 	}
 
-	ordered, timed := placementOrder(d)
+	ordered, timed := PlacementOrder(d)
 
 	if !timed {
 		t.Fatal("expected offsets to be detected")
@@ -48,7 +48,7 @@ func TestPlacementOrderWithoutOffsetsIsUntouched(t *testing.T) {
 		Changes:   []*ore.PixelData{px(1, nil), px(2, nil), px(3, nil)},
 	}
 
-	ordered, timed := placementOrder(d)
+	ordered, timed := PlacementOrder(d)
 
 	if timed {
 		t.Fatal("no pixel carries an offset, so nothing can be ordered by it")
@@ -62,7 +62,7 @@ func TestPlacementOrderWithoutOffsetsIsUntouched(t *testing.T) {
 func TestPlacedAtClampsImplausibleOffset(t *testing.T) {
 	d := &ore.Delta{Timestamp: 100}
 
-	if got := placedAt(d, px(1, u32(500))); got != 0 {
+	if got := PlacedAt(d.Timestamp, px(1, u32(500))); got != 0 {
 		t.Errorf("got %d, want 0 - an offset past the epoch must clamp", got)
 	}
 }
@@ -70,7 +70,7 @@ func TestPlacedAtClampsImplausibleOffset(t *testing.T) {
 func TestPlacedAtFallsBackToChunkTimestamp(t *testing.T) {
 	d := &ore.Delta{Timestamp: 10_000}
 
-	if got := placedAt(d, px(1, nil)); got != 10_000 {
+	if got := PlacedAt(d.Timestamp, px(1, nil)); got != 10_000 {
 		t.Errorf("got %d, want the delta's own timestamp", got)
 	}
 }

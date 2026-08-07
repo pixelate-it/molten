@@ -77,8 +77,21 @@ type Keyframe struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Pixels    []*PixelData           `protobuf:"bytes,2,rep,name=pixels,proto3" json:"pixels,omitempty"`
-	Width     *uint32                `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
-	Height    *uint32                `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
+	// Present together or not at all, and their presence is the format's only
+	// resize signal: a reader that sees them blanks its canvas at the new size
+	// before applying `pixels`, so a keyframe carrying them MUST carry
+	// everything that survives the resize.
+	//
+	// The recording's opening keyframe - the second chunk, always - is
+	// required to carry them. It is what establishes the canvas size, since
+	// the Header no longer can (see the reserved fields there).
+	//
+	// Absent on any other keyframe, which is then a plain restatement of
+	// canvas contents at the current size. Note the writer emits no periodic
+	// keyframes: repeated full-canvas snapshots dominated the file size for
+	// something no reader consumed.
+	Width  *uint32 `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
+	Height *uint32 `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
 	// Cumulative offset of this chunk's local (0, 0) from the recording's
 	// canonical (0, 0):
 	//
@@ -262,12 +275,6 @@ func (x *Footer) GetCanvasChecksum() uint64 {
 type Header struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Version uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	// reserved 2, 3;
-	// reserved "width", "height";
-	// record.v1 only - the initial size now lives on the first Keyframe, which
-	// is also the only thing that can express a mid-recording resize.
-	Width  *uint32 `protobuf:"varint,2,opt,name=width,proto3,oneof" json:"width,omitempty"`
-	Height *uint32 `protobuf:"varint,3,opt,name=height,proto3,oneof" json:"height,omitempty"`
 	// Season name.
 	Name      string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	StartedAt uint64 `protobuf:"varint,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
@@ -314,20 +321,6 @@ func (*Header) Descriptor() ([]byte, []int) {
 func (x *Header) GetVersion() uint32 {
 	if x != nil {
 		return x.Version
-	}
-	return 0
-}
-
-func (x *Header) GetWidth() uint32 {
-	if x != nil && x.Width != nil {
-		return *x.Width
-	}
-	return 0
-}
-
-func (x *Header) GetHeight() uint32 {
-	if x != nil && x.Height != nil {
-		return *x.Height
 	}
 	return 0
 }
@@ -504,24 +497,20 @@ const file_record_proto_rawDesc = "" +
 	"\x06Footer\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12.\n" +
 	"\x13total_pixels_placed\x18\x02 \x01(\x04R\x11totalPixelsPlaced\x12'\n" +
-	"\x0fcanvas_checksum\x18\x03 \x01(\x04R\x0ecanvasChecksum\"\xa4\x02\n" +
+	"\x0fcanvas_checksum\x18\x03 \x01(\x04R\x0ecanvasChecksum\"\xf2\x01\n" +
 	"\x06Header\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\rR\aversion\x12\x19\n" +
-	"\x05width\x18\x02 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
-	"\x06height\x18\x03 \x01(\rH\x01R\x06height\x88\x01\x01\x12\x12\n" +
+	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"started_at\x18\x05 \x01(\x04R\tstartedAt\x12\x1c\n" +
-	"\agame_id\x18\x06 \x01(\x04H\x02R\x06gameId\x88\x01\x01\x12\x1f\n" +
-	"\bcooldown\x18\a \x01(\rH\x03R\bcooldown\x88\x01\x01\x12\x1c\n" +
-	"\aends_at\x18\b \x01(\x04H\x04R\x06endsAt\x88\x01\x01B\b\n" +
-	"\x06_widthB\t\n" +
-	"\a_heightB\n" +
+	"\agame_id\x18\x06 \x01(\x04H\x00R\x06gameId\x88\x01\x01\x12\x1f\n" +
+	"\bcooldown\x18\a \x01(\rH\x01R\bcooldown\x88\x01\x01\x12\x1c\n" +
+	"\aends_at\x18\b \x01(\x04H\x02R\x06endsAt\x88\x01\x01B\n" +
 	"\n" +
 	"\b_game_idB\v\n" +
 	"\t_cooldownB\n" +
 	"\n" +
-	"\b_ends_at\"\xdc\x01\n" +
+	"\b_ends_atJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x05widthR\x06height\"\xdc\x01\n" +
 	"\x0eRecordingChunk\x12,\n" +
 	"\x06header\x18\x01 \x01(\v2\x12.molten.ore.HeaderH\x00R\x06header\x122\n" +
 	"\bkeyframe\x18\x03 \x01(\v2\x14.molten.ore.KeyframeH\x00R\bkeyframe\x12)\n" +
