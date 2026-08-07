@@ -233,6 +233,116 @@ Unknown chunk types are ignored, not errors — the `oneof` is expected to grow.
 
 ---
 
+## Using it as a library
+
+Steps 1–4 above are the part a new reader gets wrong, so they are packaged
+rather than left as prose. Three importable packages:
+
+```bash
+go get github.com/pixelate-it/molten
+```
+
+| Package                                 | What it gives you                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `github.com/pixelate-it/molten/ore`     | The protobuf types. The wire contract itself.                                 |
+| `github.com/pixelate-it/molten/format`  | The container: framing, the header rules, and the coordinate/time arithmetic. |
+| `github.com/pixelate-it/molten/canvas`  | Replaying chunks — into an image (`State`) or into a checksum (`Digest`).     |
+
+Everything else — the ffmpeg pipe, the segment manager, the version string —
+stays under `internal/`. It is the CLI's business, not the format's.
+
+### Reading a finished recording
+
+```go
+f, err := os.Open("season.mltn")
+if err != nil { return err }
+defer f.Close()
+
+r := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
+
+header, initialKf, err := format.ReadHeader(r)   // enforces steps 1 and 2
+if err != nil { return err }
+
+width, height, ok := format.InitialSize(header, initialKf)
+if !ok { return format.ErrMissingInitialKeyframe }
+
+state := canvas.NewState()
+state.Resize(width, height)
+state.ApplyKeyframe(initialKf)
+
+for {
+    chunk, err := r.Next()
+    if errors.Is(err, io.EOF) { break }
+    if err != nil { return err }
+
+    switch {
+    case chunk.GetKeyframe() != nil:
+        if state.ApplyKeyframe(chunk.GetKeyframe()) {
+            // a resize: the canvas was blanked at a new size
+        }
+    case chunk.GetDelta() != nil:
+        state.ApplyDelta(chunk.GetDelta())
+    case chunk.GetFooter() != nil:
+        // the season is over
+    }
+}
+```
+
+`state.ColorAt(x, y)` reads a pixel; `state.Image()` hands back the live
+`*image.RGBA` (not a copy — applying anything else writes through it).
+
+### Reading a recording that is still being written
+
+Use `format.NewTailReader`, **not** `ChunkReader`, and give it the file rather
+than a `bufio.Reader` — it needs to seek the thing it reads from.
+
+```go
+tr := format.NewTailReader(f)
+
+for {
+    chunk, err := tr.Next()
+    if errors.Is(err, io.EOF) {
+        time.Sleep(250 * time.Millisecond)   // nothing more *yet*
+        continue
+    }
+    if err != nil { return err }
+    ...
+}
+```
+
+The difference is the whole point. A live consumer polls, so it meets the
+writer mid-chunk — a backend flushing every few seconds keeps a poller at the
+end of the file essentially always. `ChunkReader` consumes the length prefix
+and whatever body had been flushed before reporting `io.EOF`, which leaves it
+positioned *inside* a chunk body, so its next four bytes are body taken for a
+length: either a corrupt-length error out of nowhere or a plausible number that
+decodes garbage. `TailReader` rewinds to where the incomplete chunk began, so
+sleeping and calling again resumes cleanly.
+
+`io.EOF` from a `TailReader` never means "finished" — only "nothing more right
+now". A `Footer` chunk is what says the season is over. `tr.Offset()` is worth
+keeping across restarts; it is the only way to resume without replaying from
+the beginning.
+
+### Verifying a recording
+
+`canvas.Digest` reproduces `Footer.canvas_checksum` — the format's only
+cross-implementation check. Feed it the same chunks you feed a `State`, then
+compare `Digest.Sum()` against the footer. That is exactly what `molten info`
+prints, and what a new reader in another language should be tested against.
+
+### Two traps the API takes care of
+
+- **Pixel ids are relative to the width in force at the time**, not the
+  recording's final width. Applying chunks in order through a `State` or a
+  `Digest` handles it; decoding a whole file against one global width silently
+  misplaces everything written before the last resize.
+- **A delta's recorded order is first-touch order, not placement order.**
+  `format.PlacementOrder(delta)` returns the pixels in the order they were
+  painted, and `format.PlacedAt(chunkTimestamp, pixel)` resolves when one was.
+
+---
+
 ## The CLI
 
 ```

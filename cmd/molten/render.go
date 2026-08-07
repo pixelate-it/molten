@@ -7,11 +7,9 @@ import (
 	"io"
 	"log"
 	"os"
-	"sort"
 
-	"github.com/pixelate-it/molten/internal/canvas"
-	"github.com/pixelate-it/molten/internal/format"
-	"github.com/pixelate-it/molten/internal/render"
+	"github.com/pixelate-it/molten/canvas"
+	"github.com/pixelate-it/molten/format"
 	"github.com/pixelate-it/molten/internal/segment"
 	ore "github.com/pixelate-it/molten/ore"
 )
@@ -110,7 +108,7 @@ func runRender(args []string) error {
 	defer mgr.Close()
 
 	emit := func() error {
-		return mgr.WriteFrame(render.Frame(state))
+		return mgr.WriteFrame(state.Image())
 	}
 
 	var runErr error
@@ -212,48 +210,6 @@ func renderTimeMode(
 	}
 }
 
-// placedAt resolves when a pixel in a delta was actually painted.
-//
-// PixelData.Offset counts milliseconds back from the delta's own timestamp,
-// which is the flush - not the placement. Absent, the flush is the best
-// information there is.
-func placedAt(d *ore.Delta, p *ore.PixelData) uint64 {
-	offset := uint64(p.GetOffset())
-	if offset > d.Timestamp {
-		return 0
-	}
-	return d.Timestamp - offset
-}
-
-// placementOrder returns a delta's pixels sorted by when they were painted,
-// and whether any of them carried an offset to sort by.
-//
-// A false second return means the recording predates the field: the caller
-// gets the recorded slice untouched, costing neither a copy nor a sort.
-func placementOrder(d *ore.Delta) ([]*ore.PixelData, bool) {
-	hasOffsets := false
-	for _, p := range d.Changes {
-		if p.Offset != nil {
-			hasOffsets = true
-			break
-		}
-	}
-
-	if !hasOffsets {
-		return d.Changes, false
-	}
-
-	ordered := make([]*ore.PixelData, len(d.Changes))
-	copy(ordered, d.Changes)
-
-	// Stable, so pixels sharing an instant keep their recorded order.
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return placedAt(d, ordered[i]) < placedAt(d, ordered[j])
-	})
-
-	return ordered, true
-}
-
 // applyDeltaOverTime plays a delta out across the span it really covers.
 //
 // A delta carries every pixel changed since the last flush, so applying it
@@ -265,7 +221,7 @@ func placementOrder(d *ore.Delta) ([]*ore.PixelData, bool) {
 // Recordings written before the offset field carry none, and take the original
 // path exactly - no behaviour change for anything already on disk.
 func applyDeltaOverTime(state *canvas.State, d *ore.Delta, advance func(uint64) error) error {
-	ordered, timed := placementOrder(d)
+	ordered, timed := format.PlacementOrder(d)
 
 	// Nothing to interleave by: keep the original atomic behaviour exactly.
 	if !timed {
@@ -276,7 +232,7 @@ func applyDeltaOverTime(state *canvas.State, d *ore.Delta, advance func(uint64) 
 	for _, p := range ordered {
 		// Frames covering the time before this pixel show the canvas without
 		// it, so it appears in the frame after the moment it was painted.
-		if err := advance(placedAt(d, p)); err != nil {
+		if err := advance(format.PlacedAt(d.Timestamp, p)); err != nil {
 			return err
 		}
 		state.ApplySinglePixel(p)
@@ -351,7 +307,7 @@ func renderActivityMode(
 			 * placement order - a pixel enters the change set the first time
 			 * it is painted and keeps that position however often it is
 			 * repainted. Offsets give the real order. */
-			ordered, _ := placementOrder(chunk.GetDelta())
+			ordered, _ := format.PlacementOrder(chunk.GetDelta())
 			for _, p := range ordered {
 				if err := applyAndMaybeEmit(p); err != nil {
 					return err
