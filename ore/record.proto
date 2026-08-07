@@ -13,6 +13,20 @@ message Delta {
 message Keyframe {
     uint64 timestamp = 1;
     repeated PixelData pixels = 2;
+
+    // Present together or not at all, and their presence is the format's only
+    // resize signal: a reader that sees them blanks its canvas at the new size
+    // before applying `pixels`, so a keyframe carrying them MUST carry
+    // everything that survives the resize.
+    //
+    // The recording's opening keyframe - the second chunk, always - is
+    // required to carry them. It is what establishes the canvas size, since
+    // the Header no longer can (see the reserved fields there).
+    //
+    // Absent on any other keyframe, which is then a plain restatement of
+    // canvas contents at the current size. Note the writer emits no periodic
+    // keyframes: repeated full-canvas snapshots dominated the file size for
+    // something no reader consumed.
     optional uint32 width = 3;
     optional uint32 height = 4;
 
@@ -72,12 +86,15 @@ message Footer {
 
 message Header {
     uint32 version = 1;
-    //reserved 2, 3;
-    //reserved "width", "height";
-    // record.v1 only - the initial size now lives on the first Keyframe, which
-    // is also the only thing that can express a mid-recording resize.
-    optional uint32 width = 2;
-    optional uint32 height = 3;
+
+    // Retired with record.v1. The canvas size lives on the first Keyframe and
+    // nowhere else - it is the only chunk that can express a size at all, and
+    // therefore the only one that can express a mid-recording resize. A header
+    // carrying a size is a pre-v5 file; readers reject it rather than guessing
+    // which of the two to believe.
+    reserved 2, 3;
+    reserved "width", "height";
+
     // Season name.
     string name = 4;
     uint64 started_at = 5;

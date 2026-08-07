@@ -34,8 +34,9 @@ var (
 	// not a recording.
 	ErrNotHeader = errors.New("mltm: first chunk is not a Header")
 	// ErrMissingInitialKeyframe means nothing established the canvas size: the
-	// Header was not followed by a Keyframe carrying width and height, and the
-	// Header did not carry them either (which only legacy .pbr files do).
+	// Header was not followed by a Keyframe carrying width and height. A
+	// record.v1 file lands here too, having put the size on the Header, whose
+	// width/height are now reserved.
 	ErrMissingInitialKeyframe = errors.New("mltm: Header is not followed by an initial Keyframe with canvas size")
 	// ErrCorruptChunkLength means a length prefix was zero or above
 	// MaxChunkSize. Both readings are treated as corruption rather than as a

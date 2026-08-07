@@ -32,7 +32,7 @@ func (s *stringList) Set(value string) error {
 
 func runRender(args []string) error {
 	fs := flag.NewFlagSet("render", flag.ContinueOnError)
-	inputPath := fs.String("in", "", "path to a recording file, .mltn or legacy .pbr (required)")
+	inputPath := fs.String("in", "", "path to a .mltn recording (required)")
 	outputPath := fs.String("out", "out.mp4", "output video path (numbered per-segment if the canvas was resized)")
 	fps := fs.Int("fps", 30, "output video fps")
 	mode := fs.String("mode", "time", "frame emission mode: time | activity")
@@ -68,22 +68,17 @@ func runRender(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	header, initialKf, err := format.ReadHeader(reader)
+	_, initialKf, width, height, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
 
-	width, height, ok := format.InitialSize(header, initialKf)
-	if !ok {
-		return format.ErrMissingInitialKeyframe
-	}
 	log.Printf("initial canvas size: %dx%d", width, height)
 
+	// The opening keyframe carries the size, so this both sizes the canvas and
+	// lays down its opening contents.
 	state := canvas.NewState()
-	state.Resize(width, height)
-	for _, p := range initialKf.Pixels {
-		state.ApplySinglePixel(p)
-	}
+	state.ApplyKeyframe(initialKf)
 
 	mgr := segment.NewManager(*outputPath, *fps).
 		WithEncodeOptions(*scale, extraArgs)

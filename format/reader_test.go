@@ -199,19 +199,50 @@ func TestTailReaderResumesAcrossAPartialLengthPrefix(t *testing.T) {
 func TestReadHeaderRequiresAHeaderFirst(t *testing.T) {
 	data, _ := encoded(t, delta(1000, 1))
 
-	if _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data))); !errors.Is(err, ErrNotHeader) {
+	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	if !errors.Is(err, ErrNotHeader) {
 		t.Fatalf("got %v, want ErrNotHeader", err)
 	}
 }
 
+func TestReadHeaderReturnsTheOpeningSize(t *testing.T) {
+	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
+		Header: &ore.Header{Version: 5, Name: "s", StartedAt: 1},
+	}}
+	w, h := uint32(64), uint32(32)
+	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
+		Keyframe: &ore.Keyframe{Timestamp: 2, Width: &w, Height: &h},
+	}}
+
+	data, _ := encoded(t, header, sized, delta(3000, 1))
+
+	cr := NewChunkReader(bytes.NewReader(data))
+	gotHeader, kf, gotW, gotH, err := ReadHeader(cr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotW != 64 || gotH != 32 {
+		t.Fatalf("got %dx%d, want 64x32", gotW, gotH)
+	}
+	if gotHeader.Name != "s" || kf.Timestamp != 2 {
+		t.Fatal("header and keyframe must come back too")
+	}
+
+	// left positioned on the third chunk, so the caller carries straight on
+	next, err := cr.Next()
+	if err != nil || next.GetDelta() == nil {
+		t.Fatalf("expected to be positioned on the delta, got %v / %v", next, err)
+	}
+}
+
 /*
-The size lives on the first keyframe, not the header - so a header followed by
-a keyframe that does not carry one is a file nothing can decode. Pixel ids are
-y*width+x; without a width there is nowhere to put a pixel.
+The size lives on the opening keyframe and nowhere else, so a header followed
+by a keyframe that does not carry one is a file nothing can decode. Pixel ids
+are y*width+x; without a width there is nowhere to put a pixel.
 */
 func TestReadHeaderRequiresASizedKeyframe(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
-		Header: &ore.Header{Version: 4, Name: "s", StartedAt: 1},
+		Header: &ore.Header{Version: 5, Name: "s", StartedAt: 1},
 	}}
 	unsized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
 		Keyframe: &ore.Keyframe{Timestamp: 2},
@@ -219,23 +250,60 @@ func TestReadHeaderRequiresASizedKeyframe(t *testing.T) {
 
 	data, _ := encoded(t, header, unsized)
 
-	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrMissingInitialKeyframe) {
 		t.Fatalf("got %v, want ErrMissingInitialKeyframe", err)
 	}
 }
 
-// Legacy .pbr files put the size on the header, and must keep reading.
-func TestInitialSizePrefersTheLegacyHeaderSize(t *testing.T) {
-	w, h := uint32(64), uint32(32)
-	header := &ore.Header{Width: &w, Height: &h}
+/*
+A record.v1 file put the size on the Header, whose width/height are now
+reserved - so the bytes that used to carry it decode into nothing and the file
+is refused. That is the intended outcome of retiring the fields, not a
+regression: there is no longer anywhere to read a size from, and guessing one
+would misplace every pixel.
+*/
+func TestReadHeaderRefusesALegacySizeOnHeader(t *testing.T) {
+	// fields 2 and 3 on a Header are what record.v1 wrote its size into
+	legacyHeader := []byte{0x08, 0x01, 0x10, 0xc8, 0x01, 0x18, 0xc8, 0x01}
 
-	kw, kh := uint32(999), uint32(999)
-	kf := &ore.Keyframe{Width: &kw, Height: &kh}
+	var buf bytes.Buffer
+	w := NewChunkWriter(&buf)
+	if err := w.Write(&ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
+		Header: func() *ore.Header {
+			h := &ore.Header{}
+			// unknown fields survive a round-trip, which is exactly how a v1
+			// header looks to this build
+			h.ProtoReflect().SetUnknown(legacyHeader[2:])
+			h.Version = 1
+			return h
+		}(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(&ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
+		Keyframe: &ore.Keyframe{Timestamp: 2},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 
-	gotW, gotH, ok := InitialSize(header, kf)
-	if !ok || gotW != 64 || gotH != 32 {
-		t.Fatalf("got %dx%d ok=%v, want 64x32 from the header", gotW, gotH, ok)
+	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(buf.Bytes())))
+	if !errors.Is(err, ErrMissingInitialKeyframe) {
+		t.Fatalf("got %v, want ErrMissingInitialKeyframe - a v1 size is unreadable now", err)
+	}
+}
+
+func TestCanvasSizeNeedsBothAxes(t *testing.T) {
+	only := uint32(8)
+
+	if _, _, ok := CanvasSize(&ore.Keyframe{Width: &only}); ok {
+		t.Error("a width with no height is not a size")
+	}
+	if _, _, ok := CanvasSize(&ore.Keyframe{Height: &only}); ok {
+		t.Error("a height with no width is not a size")
+	}
+	if _, _, ok := CanvasSize(&ore.Keyframe{}); ok {
+		t.Error("an unsized keyframe has no size")
 	}
 }
 

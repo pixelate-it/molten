@@ -15,7 +15,7 @@ import (
 
 func runInfo(args []string) error {
 	fs := flag.NewFlagSet("info", flag.ContinueOnError)
-	inputPath := fs.String("in", "", "path to a recording file, .mltn or legacy .pbr (required)")
+	inputPath := fs.String("in", "", "path to a .mltn recording (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -35,14 +35,9 @@ func runInfo(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	header, initialKf, err := format.ReadHeader(reader)
+	header, initialKf, width, height, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
-	}
-
-	width, height, ok := format.InitialSize(header, initialKf)
-	if !ok {
-		return format.ErrMissingInitialKeyframe
 	}
 
 	type resizeEvent struct {
@@ -60,13 +55,8 @@ func runInfo(args []string) error {
 		originY: initialOriginY,
 	}}
 
-	/* Sized explicitly rather than through ApplyKeyframe: a legacy .pbr takes
-	 * its size from the header, so the opening keyframe may not carry one. */
 	digest := canvas.NewDigest()
-	digest.Resize(width, height, initialOriginX, initialOriginY)
-	for _, p := range initialKf.Pixels {
-		digest.Apply(p)
-	}
+	digest.ApplyKeyframe(initialKf)
 
 	var keyframes, deltas, chunkCount int
 	// Pixel changes across deltas, which is what Footer.total_pixels_placed
@@ -156,7 +146,14 @@ func runInfo(args []string) error {
 	fmt.Printf("Deltas:        %d\n", deltas)
 	fmt.Printf("Pixel changes: %d\n", placed)
 	fmt.Printf("Last ts:       %d\n", lastTs)
-	fmt.Printf("Duration:      %.1fs\n", float64(lastTs-header.StartedAt)/1000)
+	/* Unsigned subtraction, so a recording whose last chunk predates its own
+	 * header wraps to nonsense - which a freshly rolled file does by default,
+	 * having no chunk after the opening keyframe to take a time from. */
+	if lastTs >= header.StartedAt {
+		fmt.Printf("Duration:      %.1fs\n", float64(lastTs-header.StartedAt)/1000)
+	} else {
+		fmt.Printf("Duration:      unknown (last chunk predates the header)\n")
+	}
 
 	if len(resizes) > 1 {
 		fmt.Printf("Resizes:       %d\n", len(resizes)-1)

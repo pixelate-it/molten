@@ -3,58 +3,66 @@ package format
 import ore "github.com/pixelate-it/molten/ore"
 
 /*
-InitialSize resolves the canvas size a recording starts at.
+CanvasSize reads the canvas size off a keyframe.
 
-The size lives on the first Keyframe, not on the Header, because it can change
-mid-recording. Legacy .pbr (record.v1) files put it on the Header instead, and
-that is preferred where present purely so those files keep reading.
+The size lives on a Keyframe and nowhere else, because it can change
+mid-recording and a Keyframe is the only chunk that can say so. record.v1 put
+it on the Header instead; that field is retired and those files no longer read
+(see the reserved fields in ore/record.proto).
 
-ok is false when neither carries it, which is a file nothing can decode: pixel
-ids are y*width+x, so without a width there is no way to place a single pixel.
+ok is false when the keyframe does not carry one - which for a recording's
+opening keyframe is a file nothing can decode, since pixel ids are y*width+x
+and without a width there is nowhere to put a pixel.
 */
-func InitialSize(header *ore.Header, firstKeyframe *ore.Keyframe) (width, height uint32, ok bool) {
-	if header.Width != nil && header.Height != nil {
-		return *header.Width, *header.Height, true
+func CanvasSize(kf *ore.Keyframe) (width, height uint32, ok bool) {
+	if kf.Width == nil || kf.Height == nil {
+		return 0, 0, false
 	}
-	if firstKeyframe.Width != nil && firstKeyframe.Height != nil {
-		return *firstKeyframe.Width, *firstKeyframe.Height, true
-	}
-	return 0, 0, false
+	return *kf.Width, *kf.Height, true
 }
 
 /*
 ReadHeader consumes the two chunks every recording opens with and checks that
-it is one: a Header, then a Keyframe that establishes the canvas size.
+it is one: a Header, then a Keyframe carrying the canvas size.
 
-cr is left positioned on the third chunk, so a caller carries straight on with
-Next. The keyframe comes back as well as the header because it is not just a
+width and height come back because reading them is the only reason the second
+chunk is mandatory; the keyframe itself comes back too because it is not just a
 size announcement - it carries the opening state of the canvas, and its pixels
 still have to be applied.
+
+cr is left positioned on the third chunk, so a caller carries straight on with
+Next.
+
+A record.v1 file fails here with ErrMissingInitialKeyframe, and that is the
+intended outcome rather than an accident: it put the size on the Header, that
+field is retired, and there is nothing left to read a size from. Convert such a
+file before reading it.
 */
-func ReadHeader(cr *ChunkReader) (*ore.Header, *ore.Keyframe, error) {
+func ReadHeader(cr *ChunkReader) (header *ore.Header, kf *ore.Keyframe, width, height uint32, err error) {
 	first, err := cr.Next()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, 0, err
 	}
-	header := first.GetHeader()
+	header = first.GetHeader()
 	if header == nil {
-		return nil, nil, ErrNotHeader
+		return nil, nil, 0, 0, ErrNotHeader
 	}
 
 	second, err := cr.Next()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, 0, err
 	}
-	kf := second.GetKeyframe()
+	kf = second.GetKeyframe()
 	if kf == nil {
-		return nil, nil, ErrMissingInitialKeyframe
+		return nil, nil, 0, 0, ErrMissingInitialKeyframe
 	}
 
-	if _, _, ok := InitialSize(header, kf); !ok {
-		return nil, nil, ErrMissingInitialKeyframe
+	width, height, ok := CanvasSize(kf)
+	if !ok {
+		return nil, nil, 0, 0, ErrMissingInitialKeyframe
 	}
 
-	return header, kf, nil
+	return header, kf, width, height, nil
 }
 
 /*

@@ -85,9 +85,9 @@ Notably **not** width and height. Those can change mid-recording, so they live
 on the first `Keyframe` instead, and `format.ReadHeader` refuses a file whose
 second chunk is not a sized keyframe.
 
-Legacy `.pbr` (`record.v1`) files did put the size on the header.
-`format.InitialSize` still prefers it when present, purely so those files keep
-rendering.
+`record.v1` (`.pbr`) put the size on the header instead. Those fields are
+**reserved** now, so such a file has nowhere left to declare a size and is
+refused rather than guessed at — convert it first.
 
 ### `Keyframe`
 
@@ -186,9 +186,22 @@ Keyframes carry it too. A keyframe restates the whole canvas, so without
 per-pixel offsets an expansion would flatten a season's placement times onto
 the moment it happened.
 
-Unset means "no better information than the chunk's own timestamp" — which is
-what every recording written before the field looks like, and what a pixel
-whose real time is only an upper bound has to fall back to.
+**Writers MUST set it whenever the placement time is known and differs from the
+chunk's timestamp, and MUST leave it unset otherwise.** So unset means exactly
+one thing — "no better information than the chunk's own timestamp" — and covers
+every case where there is none: a time that was never recorded (a pre-v3 file,
+or a pixel a moderator rollback restored, whose real paint time is long gone), a
+time that is only a _bound_, and a clock that moved backwards between the
+placement and the flush.
+
+It stays `optional` deliberately, and must. Proto3 implicit presence would
+default it to `0`, and `0` is precisely "placed at the chunk's timestamp" — so
+the cases above would become indistinguishable from an exact placement, which is
+a claim the writer cannot make. Nothing is saved by it either: an
+implicit-presence scalar equal to `0` is not serialized at all.
+
+Readers must not read unset as `0`. Fall back to the chunk's timestamp and carry
+the fact that it is a bound.
 
 ### `Footer.canvas_checksum`
 
@@ -217,8 +230,8 @@ someone who can rewrite the footer along with the chunks.
 The minimum a correct reader does:
 
 1. Read chunk 1. It must be a `Header`.
-2. Read chunk 2. It must be a `Keyframe`. Take the canvas size from it — or,
-   for a legacy `.pbr`, from the header.
+2. Read chunk 2. It must be a `Keyframe`, and it must carry `width`/`height` —
+   that is the only place a canvas size is ever declared.
 3. For each chunk after that:
     - **sized keyframe** → blank the canvas at the new size, adopt its
       `origin_x`/`origin_y`, apply its pixels, cut a new output segment;
@@ -260,14 +273,13 @@ defer f.Close()
 
 r := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-header, initialKf, err := format.ReadHeader(r)   // enforces steps 1 and 2
+// enforces steps 1 and 2, and hands back the size the opening keyframe declared
+header, initialKf, width, height, err := format.ReadHeader(r)
 if err != nil { return err }
 
-width, height, ok := format.InitialSize(header, initialKf)
-if !ok { return format.ErrMissingInitialKeyframe }
-
+// the opening keyframe carries the size, so this sizes the canvas as well as
+// laying down its opening contents
 state := canvas.NewState()
-state.Resize(width, height)
 state.ApplyKeyframe(initialKf)
 
 for {
@@ -380,7 +392,7 @@ never taken of would report a mismatch that says nothing about either side.
 
 | Flag      | Default   | Meaning                                                                  |
 | --------- | --------- | ------------------------------------------------------------------------ |
-| `-in`     | —         | Input recording, `.mltn` or legacy `.pbr`. Required.                     |
+| `-in`     | —         | Input recording, `.mltn`. Required.                                      |
 | `-out`    | `out.mp4` | Output path. Numbered per segment if the canvas was resized.             |
 | `-fps`    | `30`      | Output frame rate.                                                       |
 | `-mode`   | `time`    | `time` — real elapsed time, sped up. `activity` — a frame per N changes. |
