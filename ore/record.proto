@@ -15,6 +15,59 @@ message Keyframe {
     repeated PixelData pixels = 2;
     optional uint32 width = 3;
     optional uint32 height = 4;
+
+    // Cumulative offset of this chunk's local (0, 0) from the recording's
+    // canonical (0, 0):
+    //
+    //     canonical = local - origin
+    //     local     = canonical + origin
+    //
+    // A resize grows the canvas around the existing artwork, so without this
+    // every coordinate in the file shifts whenever the anchor is anything but
+    // top-left, and a "pixel (12, 40)" recorded on day one names a different
+    // piece of art on day three. Canonical coordinates are the ones that
+    // survive: they are fixed to the content, and are what a permalink, a
+    // client-side stencil, or a cross-implementation checksum should use.
+    //
+    // 0 on the opening (sizing) keyframe, which is what defines the canonical
+    // space. Always >= 0 afterwards - resizes are strictly grow-only and an
+    // anchor only ever adds space around the old content (see anchorOffset),
+    // so the origin can only move away from local (0, 0), never behind it.
+    //
+    // Note that a *canonical* coordinate may well be negative: anything
+    // painted into space added on the left or the top has local < origin.
+    //
+    // Unset means 0 - which is what every recording written before this field
+    // claims, correctly for the ones that never resized and by necessity for
+    // the ones that did, since nothing on disk recorded the anchor.
+    optional uint32 origin_x = 5;
+    optional uint32 origin_y = 6;
+}
+
+// Seals a recording: written once, as the last chunk, when the season it
+// records is over. Its presence is the only thing that distinguishes a
+// finished recording from one whose writer is still running or died mid-flush
+// - the framing alone cannot, since both simply end after a valid chunk.
+message Footer {
+    uint64 timestamp = 1;
+
+    // Pixel changes recorded across every Delta in the file. Deliberately not
+    // a chunk count and deliberately not counting Keyframe pixels: a keyframe
+    // restates pixels that were already counted when their delta was written.
+    uint64 total_pixels_placed = 2;
+
+    // xxHash64 (seed 0) over the canvas as of this footer, digesting every
+    // non-blank pixel sorted by canonical (y, x) as a 12-byte little-endian
+    // record: int32 canonical_x, int32 canonical_y, uint32 color (0x00RRGGBB).
+    //
+    // Canonical rather than raw ids on purpose - an id is y * width + x, so
+    // hashing ids would give the same physical artwork a different digest
+    // either side of a resize.
+    //
+    // Non-cryptographic: this catches a reader implementation (Go, C, the
+    // TypeScript writer) that disagrees about what the file means, not an
+    // attacker who is free to rewrite the footer along with the chunks.
+    uint64 canvas_checksum = 3;
 }
 
 message Header {
@@ -43,5 +96,6 @@ message RecordingChunk {
         Header header = 1;
         Keyframe keyframe = 3;
         Delta delta = 4;
+        Footer footer = 5;
     }
 }

@@ -16,11 +16,11 @@
             {
                 packages.default = pkgs.buildGoModule {
                     pname = "molten";
-                    version = "26.8.5";
+                    version = "26.8.7";
 
                     src = ./.;
 
-                    vendorHash = "sha256-aF4c3loEsXDF8dQt9b6bZ9JV4nTjVfKsU0Jyb/lq63M=";
+                    vendorHash = "sha256-/Fy2a7gslBwi5ccvNWc1Vpg4rA2EIVfpRDBqBiyGOvc=";
 
                     env = {
                         CGO_ENABLED = 0;

@@ -22,11 +22,20 @@ const (
 )
 
 type PixelData struct {
-	state  protoimpl.MessageState `protogen:"open.v1"`
-	Id     uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Color  uint32                 `protobuf:"varint,2,opt,name=color,proto3" json:"color,omitempty"`
-	Author *uint64                `protobuf:"varint,3,opt,name=author,proto3,oneof" json:"author,omitempty"`
-	Tag    *uint64                `protobuf:"varint,4,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Position on the canvas, encoded as y * width + x - where `width` is
+	// whichever one was in force when this chunk was written, i.e. the one on
+	// the nearest *preceding* sized Keyframe, and NOT the recording's final
+	// width.
+	//
+	// A recording can resize mid-file, so anything replaying history across
+	// that boundary has to carry the width forward per keyframe. Decoding the
+	// whole file against a single global width silently misplaces every pixel
+	// written before the last resize.
+	Id     uint32  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Color  uint32  `protobuf:"varint,2,opt,name=color,proto3" json:"color,omitempty"`
+	Author *uint64 `protobuf:"varint,3,opt,name=author,proto3,oneof" json:"author,omitempty"`
+	Tag    *uint64 `protobuf:"varint,4,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
 	// Milliseconds *before* the enclosing chunk's timestamp that this pixel
 	// was actually placed.
 	//

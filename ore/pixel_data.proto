@@ -4,6 +4,15 @@ package molten.ore;
 option go_package = "github.com/pixelate-it/molten/ore";
 
 message PixelData {
+    // Position on the canvas, encoded as y * width + x - where `width` is
+    // whichever one was in force when this chunk was written, i.e. the one on
+    // the nearest *preceding* sized Keyframe, and NOT the recording's final
+    // width.
+    //
+    // A recording can resize mid-file, so anything replaying history across
+    // that boundary has to carry the width forward per keyframe. Decoding the
+    // whole file against a single global width silently misplaces every pixel
+    // written before the last resize.
     uint32 id = 1;
     uint32 color = 2;
     optional uint64 author = 3;
