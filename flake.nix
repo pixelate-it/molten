@@ -16,11 +16,11 @@
             {
                 packages.default = pkgs.buildGoModule {
                     pname = "molten";
-                    version = "26.8.7";
+                    version = "v0.1.1";
 
                     src = ./.;
 
-                    vendorHash = "sha256-/Fy2a7gslBwi5ccvNWc1Vpg4rA2EIVfpRDBqBiyGOvc=";
+                    vendorHash = "sha256-ytZ8w0Wn2ChtcTs8GKHmtHHdCgrNH3WIA7r4E87vFnU=";
 
                     env = {
                         CGO_ENABLED = 0;
@@ -36,7 +36,7 @@
                     meta = {
                         description = "High-performance, protobuf-based stream format for recording and broadcasting real-time pixel grids and collaborative canvases";
                         homepage = "https://github.com/pixelate-it/molten";
-                        license = pkgs.lib.licenses.gpl3Only;
+                        license = pkgs.lib.licenses.mpl20;
                         mainProgram = "molten";
                     };
                 };
