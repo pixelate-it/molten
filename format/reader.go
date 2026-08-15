@@ -33,11 +33,11 @@ var (
 	// ErrNotHeader means the file does not begin with a Header chunk, so it is
 	// not a recording.
 	ErrNotHeader = errors.New("mltm: first chunk is not a Header")
-	// ErrMissingInitialKeyframe means nothing established the canvas size: the
-	// Header was not followed by a Keyframe carrying width and height. A
-	// record.v1 file lands here too, having put the size on the Header, whose
-	// width/height are now reserved.
-	ErrMissingInitialKeyframe = errors.New("mltm: Header is not followed by an initial Keyframe with canvas size")
+	// ErrMissingInitialResize means nothing established the canvas' window: the
+	// Header was not followed by a Resize carrying a size and a corner. Without
+	// it there is nothing to lay pixels into - a pixel names a place on a
+	// plane, and the window is what says which part of that plane exists.
+	ErrMissingInitialResize = errors.New("mltm: Header is not followed by an initial Resize declaring the canvas window")
 	// ErrCorruptChunkLength means a length prefix was zero or above
 	// MaxChunkSize. Both readings are treated as corruption rather than as a
 	// very large chunk.

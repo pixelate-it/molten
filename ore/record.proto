@@ -10,42 +10,55 @@ message Delta {
     repeated PixelData changes = 2;
 }
 
+// The canvas' window: how big it is and which part of the plane it covers.
+//
+// Written as the second chunk of every recording, to open it, and again on
+// every change of size or position. A reader that sees one keeps everything it
+// holds and moves it into the new window - a coordinate means the same pixel
+// on both sides, so there is nothing to re-address and nothing to restate.
+//
+// It carries no pixels, and that is the whole point of it being its own chunk.
+// Until v7 a resize was a Keyframe carrying the entire painted canvas, because
+// a pixel was addressed by an offset into the canvas and every offset changed
+// when the canvas did - so the reader had to be handed the whole thing again.
+// On a real season that cost 91% of the file: 5.05 MB of restatement against
+// 0.47 MB of actual history.
+//
+// Both directions. A cut destroys the pixels outside the new window, and every
+// reader has to drop them itself - under the old scheme they were simply
+// omitted from the keyframe, which did the same job by accident.
+message Resize {
+    uint64 timestamp = 1;
+
+    uint32 width = 2;
+    uint32 height = 3;
+
+    // The canvas' top-left corner, in the same signed coordinates a PixelData
+    // is named by. Negative once a season has been expanded leftwards or
+    // upwards; zero for the opening Resize of every season, since the origin
+    // is defined as the corner the canvas starts on.
+    //
+    // A size alone never located a canvas. That was invisible while a pixel
+    // carried an offset into it - an offset has nowhere else to point - and
+    // became load-bearing the moment a pixel started naming a place on the
+    // plane.
+    sint32 min_x = 4;
+    sint32 min_y = 5;
+}
+
+// A restatement of canvas contents: these pixels are what is there, now.
+//
+// Carries no geometry and never changes the canvas' window - that is what
+// Resize is for. Applying one is exactly applying a Delta whose changes happen
+// to describe every painted pixel rather than the ones that just moved.
+//
+// **Nothing writes one today.** It is kept because the format is otherwise a
+// pure delta log from byte 0, and a periodic snapshot is the obvious thing to
+// add if that ever needs a recovery point. A reader should implement it
+// anyway; it costs the same five lines as a Delta.
 message Keyframe {
     uint64 timestamp = 1;
     repeated PixelData pixels = 2;
-
-    // Present together or not at all, and their presence is the format's only
-    // resize signal: a reader that sees them blanks its canvas at the new size
-    // before applying `pixels`, so a keyframe carrying them MUST carry
-    // everything that survives the resize.
-    //
-    // The recording's opening keyframe - the second chunk, always - is
-    // required to carry them. It is what establishes the canvas size, since
-    // the Header no longer can (see the reserved fields there).
-    //
-    // Absent on any other keyframe, which is then a plain restatement of
-    // canvas contents at the current size. Note the writer emits no periodic
-    // keyframes: repeated full-canvas snapshots dominated the file size for
-    // something no reader consumed.
-    optional uint32 width = 3;
-    optional uint32 height = 4;
-
-    // The canvas' top-left corner, in the same signed coordinates a PixelData
-    // is named by, and carried under the same rule as width and height: with
-    // them or not at all.
-    //
-    // A size alone never said where the canvas was. Before pixels carried
-    // coordinates that was hidden, because a pixel's id was an offset into the
-    // canvas and so could only mean a place inside it; the corner rode along
-    // as `origin_x`/`origin_y`, phrased as a translation to undo. Now that a
-    // pixel names a place on the plane, the canvas has to name the part of the
-    // plane it covers, or a reader given a sparse keyframe - white pixels are
-    // skipped - has no way to work out which region those pixels sit in.
-    //
-    // Absent means zero, which is right for the opening keyframe of every
-    // season: the origin is defined as the canvas' corner at the start.
-    optional sint32 min_x = 5;
-    optional sint32 min_y = 6;
 }
 
 // Seals a recording: written once, as the last chunk, when the season it
@@ -56,7 +69,7 @@ message Footer {
     uint64 timestamp = 1;
 
     // Pixel changes recorded across every Delta in the file. Deliberately not
-    // a chunk count and deliberately not counting Keyframe pixels: a keyframe
+    // a chunk count, and deliberately not counting Keyframe pixels: a keyframe
     // restates pixels that were already counted when their delta was written.
     uint64 total_pixels_placed = 2;
 
@@ -83,11 +96,10 @@ message Header {
     // render.
     uint32 version = 1;
 
-    // Retired with record.v1. The canvas size lives on the first Keyframe and
-    // nowhere else - it is the only chunk that can express a size at all, and
-    // therefore the only one that can express a mid-recording resize. A header
-    // carrying a size is a pre-v5 file; readers reject it rather than guessing
-    // which of the two to believe.
+    // Retired with record.v1. The canvas' window lives on Resize chunks and
+    // nowhere else, because it can change mid-recording and a header cannot.
+    // A header carrying a size is a pre-v5 file; readers reject it rather than
+    // guessing which of the two to believe.
     reserved 2, 3;
     reserved "width", "height";
 
@@ -104,9 +116,14 @@ message Header {
 }
 
 message RecordingChunk {
-    reserved 2;
+    // Field 2 was used once by the original prototype and reserved ever since.
+    // Reusing a reserved number is normally how you produce a file that decodes
+    // into the wrong message - but a reader refuses any version it does not
+    // know (see Header.version), and no pre-v7 chunk is ever handed to this
+    // dispatch. The gate is what makes the number free again.
     oneof payload {
         Header header = 1;
+        Resize resize = 2;
         Keyframe keyframe = 3;
         Delta delta = 4;
         Footer footer = 5;

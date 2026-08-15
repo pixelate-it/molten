@@ -35,28 +35,22 @@ func runInfo(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	header, initialKf, width, height, err := format.ReadHeader(reader)
+	header, first, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
 
+	opening := format.ReadWindow(first)
+
 	type resizeEvent struct {
-		ts            uint64
-		width, height uint32
-		minX, minY    int32
+		ts     uint64
+		window format.Window
 	}
 
-	initialMinX, initialMinY := format.KeyframeCorner(initialKf)
-	resizes := []resizeEvent{{
-		ts:     initialKf.Timestamp,
-		width:  width,
-		height: height,
-		minX:   initialMinX,
-		minY:   initialMinY,
-	}}
+	resizes := []resizeEvent{{ts: first.Timestamp, window: opening}}
 
 	digest := canvas.NewDigest()
-	digest.ApplyKeyframe(initialKf)
+	digest.Reframe(opening)
 
 	var keyframes, deltas, chunkCount int
 	// Pixel changes across deltas, which is what Footer.total_pixels_placed
@@ -91,22 +85,21 @@ func runInfo(args []string) error {
 		}
 
 		switch {
+		case chunk.GetResize() != nil:
+			resize := chunk.GetResize()
+			lastTs = resize.Timestamp
+
+			resizes = append(resizes, resizeEvent{
+				ts:     resize.Timestamp,
+				window: format.ReadWindow(resize),
+			})
+
+			digest.ApplyResize(resize)
+
 		case chunk.GetKeyframe() != nil:
 			kf := chunk.GetKeyframe()
 			keyframes++
 			lastTs = kf.Timestamp
-
-			if format.IsResize(kf) {
-				minX, minY := format.KeyframeCorner(kf)
-
-				resizes = append(resizes, resizeEvent{
-					ts:     kf.Timestamp,
-					width:  *kf.Width,
-					height: *kf.Height,
-					minX:   minX,
-					minY:   minY,
-				})
-			}
 
 			digest.ApplyKeyframe(kf)
 
@@ -139,10 +132,10 @@ func runInfo(args []string) error {
 	currentWidth, currentHeight := digest.Size()
 	minX, minY := digest.Corner()
 
-	fmt.Printf("Initial size:  %dx%d\n", width, height)
+	fmt.Printf("Initial size:  %dx%d\n", opening.Width, opening.Height)
 	fmt.Printf("Current size:  %dx%d\n", currentWidth, currentHeight)
 	fmt.Printf("Corner:        %d,%d\n", minX, minY)
-	fmt.Printf("Keyframes:     %d (excluding initial)\n", keyframes)
+	fmt.Printf("Keyframes:     %d\n", keyframes)
 	fmt.Printf("Deltas:        %d\n", deltas)
 	fmt.Printf("Pixel changes: %d\n", placed)
 	fmt.Printf("Last ts:       %d\n", lastTs)
@@ -159,7 +152,8 @@ func runInfo(args []string) error {
 		fmt.Printf("Resizes:       %d\n", len(resizes)-1)
 		for i, r := range resizes {
 			fmt.Printf("  [%d] %dx%d at %d,%d @ ts=%d\n",
-				i+1, r.width, r.height, r.minX, r.minY, r.ts)
+				i+1, r.window.Width, r.window.Height,
+				r.window.MinX, r.window.MinY, r.ts)
 		}
 	}
 

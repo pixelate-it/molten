@@ -13,12 +13,13 @@ Neither reads a file. Feed them chunks from package format.
 One rule both share, and the easiest thing to get wrong in a new reader: a
 pixel names a coordinate on a fixed plane, not a place in the canvas, and the
 canvas is a window onto that plane which moves. So the canvas' corner has to
-come from the last sizing keyframe seen, not from the first one and not from
-zero - a season expanded leftwards puts its corner in the negative, and a
-reader that assumes (0, 0) draws every pixel in the wrong place.
+come from the last Resize seen, not from the first one and not from zero - a
+season expanded leftwards puts its corner in the negative, and a reader that
+assumes (0, 0) draws every pixel in the wrong place.
 
-That is the one thing v6 changed, and why a v5 file is refused outright rather
-than read: the bytes are identical and only their meaning differs.
+Which is also why a Resize carries no pixels: everything already applied keeps
+its coordinate, so the window moves and the contents come along. Both types
+below implement that as Reframe.
 */
 package canvas
 
@@ -54,23 +55,62 @@ func (s *State) Ready() bool {
 }
 
 /*
-Resize blanks the canvas at a new size.
+Reframe moves the canvas onto a new window, keeping every pixel still inside
+it and filling the rest with blank.
 
-Blank is white and fully opaque, which is what a resize keyframe assumes: it
-omits every pixel that is still white with nobody's name on it, so the fill has
-to match or the omitted pixels come out transparent.
+This is what a Resize chunk applies, and why that chunk can carry no pixels: a
+coordinate means the same pixel on both sides, so nothing is re-addressed and
+nothing has to be restated. Only the rectangle the pixels are drawn into moves.
+
+Until v7 a resize was a Keyframe carrying the whole painted canvas, and a
+reader blanked and rebuilt from it. On a real season that cost 91% of the file.
+
+Blank is white and fully opaque. Anything else and the area an expansion adds
+comes out transparent.
 */
-func (s *State) Resize(width, height uint32, minX, minY int32) {
-	s.Width, s.Height = width, height
-	s.MinX, s.MinY = minX, minY
-	s.img = image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+func (s *State) Reframe(w format.Window) {
+	img := image.NewRGBA(image.Rect(0, 0, int(w.Width), int(w.Height)))
 
-	for i := 0; i < len(s.img.Pix); i += 4 {
-		s.img.Pix[i+0] = 0xff
-		s.img.Pix[i+1] = 0xff
-		s.img.Pix[i+2] = 0xff
-		s.img.Pix[i+3] = 0xff
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i+0] = 0xff
+		img.Pix[i+1] = 0xff
+		img.Pix[i+2] = 0xff
+		img.Pix[i+3] = 0xff
 	}
+
+	if s.img != nil {
+		// Where the old buffer's rows land in the new one.
+		shiftX := int(s.MinX - w.MinX)
+		shiftY := int(s.MinY - w.MinY)
+
+		/* Clipped per axis before the copy: a row hanging off one side is
+		 * trimmed, not dropped - a cut on one axis only would otherwise lose
+		 * rows it kept every pixel of. */
+		from := max(0, -shiftX)
+		until := min(int(s.Width), int(w.Width)-shiftX)
+
+		for row := 0; row < int(s.Height) && until > from; row++ {
+			movedRow := row + shiftY
+			if movedRow < 0 || movedRow >= int(w.Height) {
+				continue
+			}
+
+			src := s.img.PixOffset(from, row)
+			dst := img.PixOffset(from+shiftX, movedRow)
+
+			copy(img.Pix[dst:dst+(until-from)*4], s.img.Pix[src:])
+		}
+	}
+
+	s.Width, s.Height = w.Width, w.Height
+	s.MinX, s.MinY = w.MinX, w.MinY
+	s.img = img
+}
+
+// ApplyResize applies a Resize chunk. Callers that cut a video segment on a
+// size change watch for this and nothing else.
+func (s *State) ApplyResize(r *ore.Resize) {
+	s.Reframe(format.ReadWindow(r))
 }
 
 func (s *State) applyPixel(p *ore.PixelData) {
@@ -96,21 +136,16 @@ func (s *State) applyPixel(p *ore.PixelData) {
 }
 
 /*
-ApplyKeyframe applies a keyframe, resizing first if it carries a size.
+ApplyKeyframe applies a keyframe: a restatement of contents at the current
+window, with no geometry of its own.
 
-resized is the signal a renderer needs: an encoder cannot change frame size
-mid-stream, so a true here is where a new output segment starts.
+Nothing writes one today - see the note on Keyframe in ore/record.proto - so
+this is exactly ApplyDelta under another name, and deliberately so.
 */
-func (s *State) ApplyKeyframe(kf *ore.Keyframe) (resized bool) {
-	if kf.Width != nil && kf.Height != nil {
-		minX, minY := format.KeyframeCorner(kf)
-		s.Resize(*kf.Width, *kf.Height, minX, minY)
-		resized = true
-	}
+func (s *State) ApplyKeyframe(kf *ore.Keyframe) {
 	for _, p := range kf.Pixels {
 		s.applyPixel(p)
 	}
-	return resized
 }
 
 // ApplyDelta applies every change in a delta, in recorded order. To walk them

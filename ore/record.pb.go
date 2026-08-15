@@ -73,48 +73,129 @@ func (x *Delta) GetChanges() []*PixelData {
 	return nil
 }
 
-type Keyframe struct {
+// The canvas' window: how big it is and which part of the plane it covers.
+//
+// Written as the second chunk of every recording, to open it, and again on
+// every change of size or position. A reader that sees one keeps everything it
+// holds and moves it into the new window - a coordinate means the same pixel
+// on both sides, so there is nothing to re-address and nothing to restate.
+//
+// It carries no pixels, and that is the whole point of it being its own chunk.
+// Until v7 a resize was a Keyframe carrying the entire painted canvas, because
+// a pixel was addressed by an offset into the canvas and every offset changed
+// when the canvas did - so the reader had to be handed the whole thing again.
+// On a real season that cost 91% of the file: 5.05 MB of restatement against
+// 0.47 MB of actual history.
+//
+// Both directions. A cut destroys the pixels outside the new window, and every
+// reader has to drop them itself - under the old scheme they were simply
+// omitted from the keyframe, which did the same job by accident.
+type Resize struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Pixels    []*PixelData           `protobuf:"bytes,2,rep,name=pixels,proto3" json:"pixels,omitempty"`
-	// Present together or not at all, and their presence is the format's only
-	// resize signal: a reader that sees them blanks its canvas at the new size
-	// before applying `pixels`, so a keyframe carrying them MUST carry
-	// everything that survives the resize.
-	//
-	// The recording's opening keyframe - the second chunk, always - is
-	// required to carry them. It is what establishes the canvas size, since
-	// the Header no longer can (see the reserved fields there).
-	//
-	// Absent on any other keyframe, which is then a plain restatement of
-	// canvas contents at the current size. Note the writer emits no periodic
-	// keyframes: repeated full-canvas snapshots dominated the file size for
-	// something no reader consumed.
-	Width  *uint32 `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
-	Height *uint32 `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
+	Width     uint32                 `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`
+	Height    uint32                 `protobuf:"varint,3,opt,name=height,proto3" json:"height,omitempty"`
 	// The canvas' top-left corner, in the same signed coordinates a PixelData
-	// is named by, and carried under the same rule as width and height: with
-	// them or not at all.
+	// is named by. Negative once a season has been expanded leftwards or
+	// upwards; zero for the opening Resize of every season, since the origin
+	// is defined as the corner the canvas starts on.
 	//
-	// A size alone never said where the canvas was. Before pixels carried
-	// coordinates that was hidden, because a pixel's id was an offset into the
-	// canvas and so could only mean a place inside it; the corner rode along
-	// as `origin_x`/`origin_y`, phrased as a translation to undo. Now that a
-	// pixel names a place on the plane, the canvas has to name the part of the
-	// plane it covers, or a reader given a sparse keyframe - white pixels are
-	// skipped - has no way to work out which region those pixels sit in.
-	//
-	// Absent means zero, which is right for the opening keyframe of every
-	// season: the origin is defined as the canvas' corner at the start.
-	MinX          *int32 `protobuf:"zigzag32,5,opt,name=min_x,json=minX,proto3,oneof" json:"min_x,omitempty"`
-	MinY          *int32 `protobuf:"zigzag32,6,opt,name=min_y,json=minY,proto3,oneof" json:"min_y,omitempty"`
+	// A size alone never located a canvas. That was invisible while a pixel
+	// carried an offset into it - an offset has nowhere else to point - and
+	// became load-bearing the moment a pixel started naming a place on the
+	// plane.
+	MinX          int32 `protobuf:"zigzag32,4,opt,name=min_x,json=minX,proto3" json:"min_x,omitempty"`
+	MinY          int32 `protobuf:"zigzag32,5,opt,name=min_y,json=minY,proto3" json:"min_y,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Resize) Reset() {
+	*x = Resize{}
+	mi := &file_record_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Resize) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Resize) ProtoMessage() {}
+
+func (x *Resize) ProtoReflect() protoreflect.Message {
+	mi := &file_record_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Resize.ProtoReflect.Descriptor instead.
+func (*Resize) Descriptor() ([]byte, []int) {
+	return file_record_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Resize) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *Resize) GetWidth() uint32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *Resize) GetHeight() uint32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *Resize) GetMinX() int32 {
+	if x != nil {
+		return x.MinX
+	}
+	return 0
+}
+
+func (x *Resize) GetMinY() int32 {
+	if x != nil {
+		return x.MinY
+	}
+	return 0
+}
+
+// A restatement of canvas contents: these pixels are what is there, now.
+//
+// Carries no geometry and never changes the canvas' window - that is what
+// Resize is for. Applying one is exactly applying a Delta whose changes happen
+// to describe every painted pixel rather than the ones that just moved.
+//
+// **Nothing writes one today.** It is kept because the format is otherwise a
+// pure delta log from byte 0, and a periodic snapshot is the obvious thing to
+// add if that ever needs a recovery point. A reader should implement it
+// anyway; it costs the same five lines as a Delta.
+type Keyframe struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Pixels        []*PixelData           `protobuf:"bytes,2,rep,name=pixels,proto3" json:"pixels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Keyframe) Reset() {
 	*x = Keyframe{}
-	mi := &file_record_proto_msgTypes[1]
+	mi := &file_record_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -126,7 +207,7 @@ func (x *Keyframe) String() string {
 func (*Keyframe) ProtoMessage() {}
 
 func (x *Keyframe) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[1]
+	mi := &file_record_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -139,7 +220,7 @@ func (x *Keyframe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Keyframe.ProtoReflect.Descriptor instead.
 func (*Keyframe) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{1}
+	return file_record_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Keyframe) GetTimestamp() uint64 {
@@ -156,34 +237,6 @@ func (x *Keyframe) GetPixels() []*PixelData {
 	return nil
 }
 
-func (x *Keyframe) GetWidth() uint32 {
-	if x != nil && x.Width != nil {
-		return *x.Width
-	}
-	return 0
-}
-
-func (x *Keyframe) GetHeight() uint32 {
-	if x != nil && x.Height != nil {
-		return *x.Height
-	}
-	return 0
-}
-
-func (x *Keyframe) GetMinX() int32 {
-	if x != nil && x.MinX != nil {
-		return *x.MinX
-	}
-	return 0
-}
-
-func (x *Keyframe) GetMinY() int32 {
-	if x != nil && x.MinY != nil {
-		return *x.MinY
-	}
-	return 0
-}
-
 // Seals a recording: written once, as the last chunk, when the season it
 // records is over. Its presence is the only thing that distinguishes a
 // finished recording from one whose writer is still running or died mid-flush
@@ -192,7 +245,7 @@ type Footer struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	// Pixel changes recorded across every Delta in the file. Deliberately not
-	// a chunk count and deliberately not counting Keyframe pixels: a keyframe
+	// a chunk count, and deliberately not counting Keyframe pixels: a keyframe
 	// restates pixels that were already counted when their delta was written.
 	TotalPixelsPlaced uint64 `protobuf:"varint,2,opt,name=total_pixels_placed,json=totalPixelsPlaced,proto3" json:"total_pixels_placed,omitempty"`
 	// xxHash64 (seed 0) over the canvas as of this footer, digesting every
@@ -213,7 +266,7 @@ type Footer struct {
 
 func (x *Footer) Reset() {
 	*x = Footer{}
-	mi := &file_record_proto_msgTypes[2]
+	mi := &file_record_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -225,7 +278,7 @@ func (x *Footer) String() string {
 func (*Footer) ProtoMessage() {}
 
 func (x *Footer) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[2]
+	mi := &file_record_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -238,7 +291,7 @@ func (x *Footer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Footer.ProtoReflect.Descriptor instead.
 func (*Footer) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{2}
+	return file_record_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Footer) GetTimestamp() uint64 {
@@ -286,7 +339,7 @@ type Header struct {
 
 func (x *Header) Reset() {
 	*x = Header{}
-	mi := &file_record_proto_msgTypes[3]
+	mi := &file_record_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -298,7 +351,7 @@ func (x *Header) String() string {
 func (*Header) ProtoMessage() {}
 
 func (x *Header) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[3]
+	mi := &file_record_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -311,7 +364,7 @@ func (x *Header) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Header.ProtoReflect.Descriptor instead.
 func (*Header) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{3}
+	return file_record_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Header) GetVersion() uint32 {
@@ -358,9 +411,16 @@ func (x *Header) GetEndsAt() uint64 {
 
 type RecordingChunk struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Field 2 was used once by the original prototype and reserved ever since.
+	// Reusing a reserved number is normally how you produce a file that decodes
+	// into the wrong message - but a reader refuses any version it does not
+	// know (see Header.version), and no pre-v7 chunk is ever handed to this
+	// dispatch. The gate is what makes the number free again.
+	//
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*RecordingChunk_Header
+	//	*RecordingChunk_Resize
 	//	*RecordingChunk_Keyframe
 	//	*RecordingChunk_Delta
 	//	*RecordingChunk_Footer
@@ -371,7 +431,7 @@ type RecordingChunk struct {
 
 func (x *RecordingChunk) Reset() {
 	*x = RecordingChunk{}
-	mi := &file_record_proto_msgTypes[4]
+	mi := &file_record_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -383,7 +443,7 @@ func (x *RecordingChunk) String() string {
 func (*RecordingChunk) ProtoMessage() {}
 
 func (x *RecordingChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_record_proto_msgTypes[4]
+	mi := &file_record_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -396,7 +456,7 @@ func (x *RecordingChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordingChunk.ProtoReflect.Descriptor instead.
 func (*RecordingChunk) Descriptor() ([]byte, []int) {
-	return file_record_proto_rawDescGZIP(), []int{4}
+	return file_record_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RecordingChunk) GetPayload() isRecordingChunk_Payload {
@@ -410,6 +470,15 @@ func (x *RecordingChunk) GetHeader() *Header {
 	if x != nil {
 		if x, ok := x.Payload.(*RecordingChunk_Header); ok {
 			return x.Header
+		}
+	}
+	return nil
+}
+
+func (x *RecordingChunk) GetResize() *Resize {
+	if x != nil {
+		if x, ok := x.Payload.(*RecordingChunk_Resize); ok {
+			return x.Resize
 		}
 	}
 	return nil
@@ -450,6 +519,10 @@ type RecordingChunk_Header struct {
 	Header *Header `protobuf:"bytes,1,opt,name=header,proto3,oneof"`
 }
 
+type RecordingChunk_Resize struct {
+	Resize *Resize `protobuf:"bytes,2,opt,name=resize,proto3,oneof"`
+}
+
 type RecordingChunk_Keyframe struct {
 	Keyframe *Keyframe `protobuf:"bytes,3,opt,name=keyframe,proto3,oneof"`
 }
@@ -463,6 +536,8 @@ type RecordingChunk_Footer struct {
 }
 
 func (*RecordingChunk_Header) isRecordingChunk_Payload() {}
+
+func (*RecordingChunk_Resize) isRecordingChunk_Payload() {}
 
 func (*RecordingChunk_Keyframe) isRecordingChunk_Payload() {}
 
@@ -478,18 +553,16 @@ const file_record_proto_rawDesc = "" +
 	"molten.ore\x1a\vpixel.proto\"V\n" +
 	"\x05Delta\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12/\n" +
-	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"\xec\x01\n" +
+	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"~\n" +
+	"\x06Resize\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12\x14\n" +
+	"\x05width\x18\x02 \x01(\rR\x05width\x12\x16\n" +
+	"\x06height\x18\x03 \x01(\rR\x06height\x12\x13\n" +
+	"\x05min_x\x18\x04 \x01(\x11R\x04minX\x12\x13\n" +
+	"\x05min_y\x18\x05 \x01(\x11R\x04minY\"W\n" +
 	"\bKeyframe\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12-\n" +
-	"\x06pixels\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\x12\x19\n" +
-	"\x05width\x18\x03 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
-	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01\x12\x18\n" +
-	"\x05min_x\x18\x05 \x01(\x11H\x02R\x04minX\x88\x01\x01\x12\x18\n" +
-	"\x05min_y\x18\x06 \x01(\x11H\x03R\x04minY\x88\x01\x01B\b\n" +
-	"\x06_widthB\t\n" +
-	"\a_heightB\b\n" +
-	"\x06_min_xB\b\n" +
-	"\x06_min_y\"\x7f\n" +
+	"\x06pixels\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\"\x7f\n" +
 	"\x06Footer\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12.\n" +
 	"\x13total_pixels_placed\x18\x02 \x01(\x04R\x11totalPixelsPlaced\x12'\n" +
@@ -506,13 +579,14 @@ const file_record_proto_rawDesc = "" +
 	"\b_game_idB\v\n" +
 	"\t_cooldownB\n" +
 	"\n" +
-	"\b_ends_atJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x05widthR\x06height\"\xdc\x01\n" +
+	"\b_ends_atJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x05widthR\x06height\"\x84\x02\n" +
 	"\x0eRecordingChunk\x12,\n" +
-	"\x06header\x18\x01 \x01(\v2\x12.molten.ore.HeaderH\x00R\x06header\x122\n" +
+	"\x06header\x18\x01 \x01(\v2\x12.molten.ore.HeaderH\x00R\x06header\x12,\n" +
+	"\x06resize\x18\x02 \x01(\v2\x12.molten.ore.ResizeH\x00R\x06resize\x122\n" +
 	"\bkeyframe\x18\x03 \x01(\v2\x14.molten.ore.KeyframeH\x00R\bkeyframe\x12)\n" +
 	"\x05delta\x18\x04 \x01(\v2\x11.molten.ore.DeltaH\x00R\x05delta\x12,\n" +
 	"\x06footer\x18\x05 \x01(\v2\x12.molten.ore.FooterH\x00R\x06footerB\t\n" +
-	"\apayloadJ\x04\b\x02\x10\x03B#Z!github.com/pixelate-it/molten/oreb\x06proto3"
+	"\apayloadB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (
 	file_record_proto_rawDescOnce sync.Once
@@ -526,27 +600,29 @@ func file_record_proto_rawDescGZIP() []byte {
 	return file_record_proto_rawDescData
 }
 
-var file_record_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_record_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_record_proto_goTypes = []any{
 	(*Delta)(nil),          // 0: molten.ore.Delta
-	(*Keyframe)(nil),       // 1: molten.ore.Keyframe
-	(*Footer)(nil),         // 2: molten.ore.Footer
-	(*Header)(nil),         // 3: molten.ore.Header
-	(*RecordingChunk)(nil), // 4: molten.ore.RecordingChunk
-	(*PixelData)(nil),      // 5: molten.ore.PixelData
+	(*Resize)(nil),         // 1: molten.ore.Resize
+	(*Keyframe)(nil),       // 2: molten.ore.Keyframe
+	(*Footer)(nil),         // 3: molten.ore.Footer
+	(*Header)(nil),         // 4: molten.ore.Header
+	(*RecordingChunk)(nil), // 5: molten.ore.RecordingChunk
+	(*PixelData)(nil),      // 6: molten.ore.PixelData
 }
 var file_record_proto_depIdxs = []int32{
-	5, // 0: molten.ore.Delta.changes:type_name -> molten.ore.PixelData
-	5, // 1: molten.ore.Keyframe.pixels:type_name -> molten.ore.PixelData
-	3, // 2: molten.ore.RecordingChunk.header:type_name -> molten.ore.Header
-	1, // 3: molten.ore.RecordingChunk.keyframe:type_name -> molten.ore.Keyframe
-	0, // 4: molten.ore.RecordingChunk.delta:type_name -> molten.ore.Delta
-	2, // 5: molten.ore.RecordingChunk.footer:type_name -> molten.ore.Footer
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	6, // 0: molten.ore.Delta.changes:type_name -> molten.ore.PixelData
+	6, // 1: molten.ore.Keyframe.pixels:type_name -> molten.ore.PixelData
+	4, // 2: molten.ore.RecordingChunk.header:type_name -> molten.ore.Header
+	1, // 3: molten.ore.RecordingChunk.resize:type_name -> molten.ore.Resize
+	2, // 4: molten.ore.RecordingChunk.keyframe:type_name -> molten.ore.Keyframe
+	0, // 5: molten.ore.RecordingChunk.delta:type_name -> molten.ore.Delta
+	3, // 6: molten.ore.RecordingChunk.footer:type_name -> molten.ore.Footer
+	7, // [7:7] is the sub-list for method output_type
+	7, // [7:7] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_record_proto_init() }
@@ -555,10 +631,10 @@ func file_record_proto_init() {
 		return
 	}
 	file_pixel_proto_init()
-	file_record_proto_msgTypes[1].OneofWrappers = []any{}
-	file_record_proto_msgTypes[3].OneofWrappers = []any{}
-	file_record_proto_msgTypes[4].OneofWrappers = []any{
+	file_record_proto_msgTypes[4].OneofWrappers = []any{}
+	file_record_proto_msgTypes[5].OneofWrappers = []any{
 		(*RecordingChunk_Header)(nil),
+		(*RecordingChunk_Resize)(nil),
 		(*RecordingChunk_Keyframe)(nil),
 		(*RecordingChunk_Delta)(nil),
 		(*RecordingChunk_Footer)(nil),
@@ -569,7 +645,7 @@ func file_record_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_record_proto_rawDesc), len(file_record_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -200,33 +200,35 @@ func TestTailReaderResumesAcrossAPartialLengthPrefix(t *testing.T) {
 func TestReadHeaderRequiresAHeaderFirst(t *testing.T) {
 	data, _ := encoded(t, delta(1000, 1))
 
-	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrNotHeader) {
 		t.Fatalf("got %v, want ErrNotHeader", err)
 	}
 }
 
-func TestReadHeaderReturnsTheOpeningSize(t *testing.T) {
+func TestReadHeaderReturnsTheOpeningWindow(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
-	w, h := uint32(64), uint32(32)
-	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
-		Keyframe: &ore.Keyframe{Timestamp: 2, Width: &w, Height: &h},
+	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
+		Resize: &ore.Resize{Timestamp: 2, Width: 64, Height: 32, MinX: -8, MinY: -4},
 	}}
 
 	data, _ := encoded(t, header, sized, delta(3000, 1))
 
 	cr := NewChunkReader(bytes.NewReader(data))
-	gotHeader, kf, gotW, gotH, err := ReadHeader(cr)
+	gotHeader, opening, err := ReadHeader(cr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotW != 64 || gotH != 32 {
-		t.Fatalf("got %dx%d, want 64x32", gotW, gotH)
+
+	window := ReadWindow(opening)
+	if window != (Window{Width: 64, Height: 32, MinX: -8, MinY: -4}) {
+		t.Fatalf("got %+v, want 64x32 at -8,-4", window)
 	}
-	if gotHeader.Name != "s" || kf.Timestamp != 2 {
-		t.Fatal("header and keyframe must come back too")
+	// The Resize comes back whole because its timestamp starts the clock.
+	if gotHeader.Name != "s" || opening.Timestamp != 2 {
+		t.Fatal("header and opening resize must come back too")
 	}
 
 	// left positioned on the third chunk, so the caller carries straight on
@@ -237,24 +239,43 @@ func TestReadHeaderReturnsTheOpeningSize(t *testing.T) {
 }
 
 /*
-The size lives on the opening keyframe and nowhere else, so a header followed
-by a keyframe that does not carry one is a file nothing can decode: a pixel
-names a coordinate, and without a size and a corner there is no way to know
-which of them the canvas covers.
+The window lives on Resize chunks and nowhere else, so a header not followed by
+one is a file nothing can decode: a pixel names a coordinate, and without a
+size and a corner there is no way to know which coordinates the canvas covers.
+
+A Keyframe in that slot is not a substitute - it carries contents and no
+geometry, which is exactly the separation this version introduced.
 */
-func TestReadHeaderRequiresASizedKeyframe(t *testing.T) {
+func TestReadHeaderRequiresAnOpeningResize(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
-	unsized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
+	contents := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
 		Keyframe: &ore.Keyframe{Timestamp: 2},
 	}}
 
-	data, _ := encoded(t, header, unsized)
+	data, _ := encoded(t, header, contents)
 
-	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
-	if !errors.Is(err, ErrMissingInitialKeyframe) {
-		t.Fatalf("got %v, want ErrMissingInitialKeyframe", err)
+	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	if !errors.Is(err, ErrMissingInitialResize) {
+		t.Fatalf("got %v, want ErrMissingInitialResize", err)
+	}
+}
+
+// A window of no area is not a window.
+func TestReadHeaderRequiresTheOpeningResizeToHaveArea(t *testing.T) {
+	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
+		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
+	}}
+	empty := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
+		Resize: &ore.Resize{Timestamp: 2, Width: 8},
+	}}
+
+	data, _ := encoded(t, header, empty)
+
+	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	if !errors.Is(err, ErrMissingInitialResize) {
+		t.Fatalf("got %v, want ErrMissingInitialResize", err)
 	}
 }
 
@@ -285,13 +306,13 @@ func TestReadHeaderRefusesALegacySizeOnHeader(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Write(&ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
-		Keyframe: &ore.Keyframe{Timestamp: 2},
+	if err := w.Write(&ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
+		Resize: &ore.Resize{Timestamp: 2, Width: 8, Height: 8},
 	}}); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(buf.Bytes())))
+	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(buf.Bytes())))
 	if !errors.Is(err, ErrUnknownVersion) {
 		t.Fatalf("got %v, want ErrUnknownVersion - a v1 file is not readable here", err)
 	}
@@ -301,55 +322,41 @@ func TestReadHeaderRefusesALegacySizeOnHeader(t *testing.T) {
 The whole reason the version stopped being decorative at v6.
 
 A v5 file is structurally identical to a v6 one - same chunks, same field
-numbers, a sized opening keyframe and all - and differs only in what the two
-numbers inside a PixelData mean. Nothing in the bytes gives that away, so
-without this check the file reads cleanly and lays every pixel out wrong.
+numbers - and differs only in what the two numbers inside a PixelData mean.
+Nothing in the bytes gives that away, so without this check the file reads
+cleanly and lays every pixel out wrong. v7 went further and put a Resize on
+field 2 of a RecordingChunk, which was free before.
 */
 func TestReadHeaderRefusesAStructurallyValidOlderVersion(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion - 1, Name: "s", StartedAt: 1},
 	}}
-	w, h := uint32(64), uint32(32)
-	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
-		Keyframe: &ore.Keyframe{Timestamp: 2, Width: &w, Height: &h},
+	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
+		Resize: &ore.Resize{Timestamp: 2, Width: 64, Height: 32, MinX: -8, MinY: -4},
 	}}
 
 	data, _ := encoded(t, header, sized)
 
-	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrUnknownVersion) {
 		t.Fatalf("got %v, want ErrUnknownVersion", err)
 	}
 }
 
-func TestCanvasSizeNeedsBothAxes(t *testing.T) {
-	only := uint32(8)
-
-	if _, _, ok := CanvasSize(&ore.Keyframe{Width: &only}); ok {
-		t.Error("a width with no height is not a size")
-	}
-	if _, _, ok := CanvasSize(&ore.Keyframe{Height: &only}); ok {
-		t.Error("a height with no width is not a size")
-	}
-	if _, _, ok := CanvasSize(&ore.Keyframe{}); ok {
-		t.Error("an unsized keyframe has no size")
-	}
-}
-
-func TestKeyframeCornerDefaultsToTheOrigin(t *testing.T) {
-	x, y := KeyframeCorner(&ore.Keyframe{})
-	if x != 0 || y != 0 {
-		t.Fatalf("got %d,%d - an absent corner is the origin", x, y)
+// Absent fields are zero, which is the right reading for a season that starts
+// on the origin - and the only one available for a corner that never moved.
+func TestReadWindowDefaultsToTheOrigin(t *testing.T) {
+	if got := ReadWindow(&ore.Resize{Width: 8, Height: 8}); got.MinX != 0 || got.MinY != 0 {
+		t.Fatalf("got %+v - an absent corner is the origin", got)
 	}
 }
 
 // The corner is a coordinate, not a distance, so it goes negative the moment a
 // season is expanded leftwards or upwards.
-func TestKeyframeCornerReadsNegatives(t *testing.T) {
-	minX, minY := int32(-12), int32(-4)
+func TestReadWindowReadsNegativeCorners(t *testing.T) {
+	got := ReadWindow(&ore.Resize{Width: 8, Height: 8, MinX: -12, MinY: -4})
 
-	x, y := KeyframeCorner(&ore.Keyframe{MinX: &minX, MinY: &minY})
-	if x != -12 || y != -4 {
-		t.Fatalf("got %d,%d, want -12,-4", x, y)
+	if got.MinX != -12 || got.MinY != -4 {
+		t.Fatalf("got %+v, want a corner at -12,-4", got)
 	}
 }

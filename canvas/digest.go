@@ -53,34 +53,62 @@ func (d *Digest) Size() (width, height uint32) { return d.width, d.height }
 // Corner returns the canvas' top-left corner as the last resize declared it.
 func (d *Digest) Corner() (minX, minY int32) { return d.minX, d.minY }
 
-// Resize blanks the digest at a new size and position.
-func (d *Digest) Resize(width, height uint32, minX, minY int32) {
-	d.width, d.height = width, height
-	d.minX, d.minY = minX, minY
+/*
+Reframe moves the digest onto a new window, keeping every pixel still inside
+it. The mirror of [State.Reframe]; see the note there for why a Resize carries
+no pixels.
+*/
+func (d *Digest) Reframe(w format.Window) {
+	size := int(w.Width) * int(w.Height)
 
-	size := int(width) * int(height)
-	d.colour = make([]uint32, size)
-	d.attributed = make([]bool, size)
+	colour := make([]uint32, size)
+	attributed := make([]bool, size)
 
-	// A resize starts from a blank canvas, and blank is white - the keyframe
-	// that carries it omits every pixel that is still this.
-	for i := range d.colour {
-		d.colour[i] = BlankColour
+	// Blank is white - a pixel is only artwork if somebody put it there.
+	for i := range colour {
+		colour[i] = BlankColour
 	}
+
+	shiftX := int(d.minX - w.MinX)
+	shiftY := int(d.minY - w.MinY)
+
+	for row := 0; row < int(d.height); row++ {
+		movedRow := row + shiftY
+		if movedRow < 0 || movedRow >= int(w.Height) {
+			continue
+		}
+
+		for column := 0; column < int(d.width); column++ {
+			movedColumn := column + shiftX
+			// Per axis - see the note in State.applyPixel.
+			if movedColumn < 0 || movedColumn >= int(w.Width) {
+				continue
+			}
+
+			from := row*int(d.width) + column
+			to := movedRow*int(w.Width) + movedColumn
+
+			colour[to] = d.colour[from]
+			attributed[to] = d.attributed[from]
+		}
+	}
+
+	d.width, d.height = w.Width, w.Height
+	d.minX, d.minY = w.MinX, w.MinY
+	d.colour, d.attributed = colour, attributed
 }
 
-// ApplyKeyframe applies a keyframe, resizing and adopting its corner first if
-// it carries a size. resized mirrors [State.ApplyKeyframe].
-func (d *Digest) ApplyKeyframe(kf *ore.Keyframe) (resized bool) {
-	if format.IsResize(kf) {
-		minX, minY := format.KeyframeCorner(kf)
-		d.Resize(*kf.Width, *kf.Height, minX, minY)
-		resized = true
-	}
+// ApplyResize applies a Resize chunk.
+func (d *Digest) ApplyResize(r *ore.Resize) {
+	d.Reframe(format.ReadWindow(r))
+}
+
+// ApplyKeyframe applies a restatement of contents. Carries no geometry - see
+// [State.ApplyKeyframe].
+func (d *Digest) ApplyKeyframe(kf *ore.Keyframe) {
 	for _, p := range kf.Pixels {
 		d.Apply(p)
 	}
-	return resized
 }
 
 // ApplyDelta applies every change in a delta.
