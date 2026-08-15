@@ -37,7 +37,7 @@ FormatVersion is the recording format this build reads.
 Bumped whenever the meaning of the bytes changes, and checked - see
 ErrUnknownVersion for why that stopped being optional at v6.
 */
-const FormatVersion = 10
+const FormatVersion = 11
 
 /*
 ReadHeader consumes the two chunks every recording opens with and checks that

@@ -217,6 +217,11 @@ Reusing a reserved number is normally how you produce a file that decodes into
 the wrong message — it is safe here only because no pre-`v7` chunk is ever
 handed to that dispatch.
 
+`v11` is the same kind of break as `v5`→`v6`: it drops the presence bit from
+`PixelData.offset`, so an older file's *unset* offset decodes as a perfectly
+valid `0` and every undated pixel silently claims to have been painted at the
+flush. Structurally identical, semantically not — exactly what the gate is for.
+
 ### `PixelData.offset`
 
 Milliseconds _before_ the enclosing chunk's timestamp that this pixel was
@@ -234,22 +239,27 @@ canvas that could not say when a pixel was painted flattened that part of the
 season's history onto the moment it was written — resizes used to do exactly
 that, and keyframes after them. Both are gone.
 
-**Writers MUST set it whenever the placement time is known and differs from the
-chunk's timestamp, and MUST leave it unset otherwise.** So unset means exactly
-one thing — "no better information than the chunk's own timestamp" — and covers
-every case where there is none: a time that was never recorded (a pre-v3 file,
-or a pixel a moderator rollback restored, whose real paint time is long gone), a
-time that is only a _bound_, and a clock that moved backwards between the
-placement and the flush.
+**Zero means the chunk's timestamp, and there is nothing else it can mean.**
+That is the whole of the rule, and it is only true because a `Delta` is now the
+only chunk carrying pixels and a `Delta`'s timestamp is a real instant. Falling
+back to it is not a guess: the pixel was on the canvas by then, and the flush is
+the nearest thing to a time anyone recorded.
 
-It stays `optional` deliberately, and must. Proto3 implicit presence would
-default it to `0`, and `0` is precisely "placed at the chunk's timestamp" — so
-the cases above would become indistinguishable from an exact placement, which is
-a claim the writer cannot make. Nothing is saved by it either: an
-implicit-presence scalar equal to `0` is not serialized at all.
+The field used to be `optional`, so that "no better information" could be told
+apart from "exactly at the timestamp". That distinction belonged to the chunk
+that no longer exists. A keyframe restated the canvas and handed its own
+timestamp down as an **upper bound** for pixels it could not date, and unset was
+how a reader knew to treat one as a bound rather than a placement. With
+keyframes gone, nothing in the format produces a bound — so unset and zero
+resolve to the identical instant, and the presence bit distinguished nothing.
 
-Readers must not read unset as `0`. Fall back to the chunk's timestamp and carry
-the fact that it is a bound.
+A writer that genuinely does not know when a pixel was painted — a moderator
+rollback restoring artwork whose original time is long gone — writes `0` and
+says the pixel was there at the flush. That is true, and it is the strongest
+thing anybody can say about it.
+
+Implicit presence also stops costing the two bytes an explicit zero needed:
+proto3 does not serialize a scalar equal to its default.
 
 ### `Footer.canvas_checksum`
 

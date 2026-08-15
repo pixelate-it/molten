@@ -222,24 +222,13 @@ func renderTimeMode(
 // freeze. Sorting by each pixel's offset recovers the true order and lets
 // frames be emitted *between* placements, which is what makes a slow render
 // look like painting rather than stamping.
-//
-// Recordings written before the offset field carry none, and take the original
-// path exactly - no behaviour change for anything already on disk.
 func applyDeltaOverTime(
 	state *canvas.State,
 	at uint64,
 	d *ore.Delta,
 	advance func(uint64) error,
 ) error {
-	ordered, timed := format.PlacementOrder(at, d)
-
-	// Nothing to interleave by: keep the original atomic behaviour exactly.
-	if !timed {
-		state.ApplyDelta(d)
-		return advance(at)
-	}
-
-	for _, p := range ordered {
+	for _, p := range format.PlacementOrder(at, d) {
 		// Frames covering the time before this pixel show the canvas without
 		// it, so it appears in the frame after the moment it was painted.
 		if err := advance(format.PlacedAt(at, p)); err != nil {
@@ -311,10 +300,9 @@ func renderActivityMode(
 			 * placement order - a pixel enters the change set the first time
 			 * it is painted and keeps that position however often it is
 			 * repainted. Offsets give the real order. */
-			ordered, _ := format.PlacementOrder(
+			for _, p := range format.PlacementOrder(
 				chunk.Timestamp, chunk.GetDelta(),
-			)
-			for _, p := range ordered {
+			) {
 				if err := applyAndMaybeEmit(p); err != nil {
 					return err
 				}

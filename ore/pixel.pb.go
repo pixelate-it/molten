@@ -43,28 +43,23 @@ type PixelData struct {
 	// epoch-ms uint64 costs 7 - and the top 40 bits of that would be identical
 	// for every pixel in the file.
 	//
-	// WRITERS MUST set this whenever the placement time is known and differs
-	// from the enclosing chunk's timestamp, and MUST leave it unset otherwise.
-	// Unset therefore means exactly one thing - "no better information than
-	// the chunk's own timestamp" - and covers every case where there is none:
+	// Zero means "at the chunk's timestamp", and there is no way to say
+	// anything else - which is the point. A Delta is the only chunk that
+	// carries pixels now, and a Delta's timestamp is a real instant, so
+	// falling back to it is never a guess: the pixel was on the canvas by
+	// then and the flush is the closest thing to a time anyone has.
 	//
-	//   - the time was never recorded (a pre-v3 recording, or a pixel restored
-	//     by a moderator rollback, whose real paint time is long gone);
-	//   - the time is a *bound* rather than an instant, i.e. "no later than",
-	//     which a keyframe hands down for pixels it has no exact time for;
-	//   - the clock moved backwards between the placement and the flush, so
-	//     the difference is not a duration.
+	// It used to be `optional`, so that "no better information" could be
+	// distinguished from "exactly at the timestamp". That distinction existed
+	// for the chunk that no longer does. A Keyframe restated the canvas and
+	// handed its own timestamp down as an *upper bound* for pixels it could
+	// not date, and unset was how a reader knew to treat it as one. With
+	// keyframes gone nothing produces a bound, and unset and zero resolve to
+	// the identical instant - a distinction that distinguishes nothing.
 	//
-	// Deliberately `optional` rather than a bare uint32, and it must stay that
-	// way: proto3 implicit presence would default it to 0, and 0 is precisely
-	// "placed at the chunk's timestamp" - so the four cases above would become
-	// indistinguishable from an exact placement, which is a claim the writer
-	// cannot make. It costs nothing on the wire either, since an implicit-
-	// presence scalar equal to 0 is not serialized at all.
-	//
-	// Readers must not treat unset as 0. Fall back to the chunk's timestamp
-	// and carry the fact that it is a bound (see format.PlacedAt).
-	Offset        *uint32 `protobuf:"varint,6,opt,name=offset,proto3,oneof" json:"offset,omitempty"`
+	// Implicit presence also stops costing the two bytes an explicit zero
+	// needed, since proto3 does not serialize a scalar equal to its default.
+	Offset        uint32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -135,8 +130,8 @@ func (x *PixelData) GetTag() uint64 {
 }
 
 func (x *PixelData) GetOffset() uint32 {
-	if x != nil && x.Offset != nil {
-		return *x.Offset
+	if x != nil {
+		return x.Offset
 	}
 	return 0
 }
@@ -146,17 +141,16 @@ var File_pixel_proto protoreflect.FileDescriptor
 const file_pixel_proto_rawDesc = "" +
 	"\n" +
 	"\vpixel.proto\x12\n" +
-	"molten.ore\"\xac\x01\n" +
+	"molten.ore\"\x9c\x01\n" +
 	"\tPixelData\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x11R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x11R\x01y\x12\x14\n" +
 	"\x05color\x18\x03 \x01(\rR\x05color\x12\x1b\n" +
 	"\x06author\x18\x04 \x01(\x04H\x00R\x06author\x88\x01\x01\x12\x15\n" +
-	"\x03tag\x18\x05 \x01(\x04H\x01R\x03tag\x88\x01\x01\x12\x1b\n" +
-	"\x06offset\x18\x06 \x01(\rH\x02R\x06offset\x88\x01\x01B\t\n" +
+	"\x03tag\x18\x05 \x01(\x04H\x01R\x03tag\x88\x01\x01\x12\x16\n" +
+	"\x06offset\x18\x06 \x01(\rR\x06offsetB\t\n" +
 	"\a_authorB\x06\n" +
-	"\x04_tagB\t\n" +
-	"\a_offsetB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
+	"\x04_tagB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (
 	file_pixel_proto_rawDescOnce sync.Once
