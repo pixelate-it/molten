@@ -43,28 +43,14 @@ message Resize {
     sint32 min_y = 4;
 }
 
-// A restatement of canvas contents: these pixels are what is there, now.
-//
-// Carries no geometry and never changes the canvas' window - that is what
-// Resize is for. Applying one is exactly applying a Delta whose changes happen
-// to describe every painted pixel rather than the ones that just moved.
-//
-// **Nothing writes one today.** It is kept because the format is otherwise a
-// pure delta log from byte 0, and a periodic snapshot is the obvious thing to
-// add if that ever needs a recovery point. A reader should implement it
-// anyway; it costs the same five lines as a Delta.
-message Keyframe {
-    repeated PixelData pixels = 1;
-}
-
 // Seals a recording: written once, as the last chunk, when the season it
 // records is over. Its presence is the only thing that distinguishes a
 // finished recording from one whose writer is still running or died mid-flush
 // - the framing alone cannot, since both simply end after a valid chunk.
 message Footer {
     // Pixel changes recorded across every Delta in the file. Deliberately not
-    // a chunk count, and deliberately not counting Keyframe pixels: a keyframe
-    // restates pixels that were already counted when their delta was written.
+    // a chunk count: it counts placements, and a recording is nothing but the
+    // Deltas that carry them.
     uint64 total_pixels_placed = 1;
 
     // xxHash64 (seed 0) over the canvas as of this footer, digesting every
@@ -110,6 +96,29 @@ message Header {
 }
 
 message RecordingChunk {
+    // Four kinds, and a recording is only ever these: who this file is, where
+    // the canvas is, what changed, and that the season is over.
+    //
+    // There used to be a fifth. `Keyframe` restated the whole canvas, and once
+    // a resize stopped needing that, nothing wrote one - it survived as a
+    // capability no writer produced and no reader could test against real
+    // data. What it did still do was carry an inexactness: its pixels came
+    // back bounded by the moment it was written wherever it could not offset
+    // them, and it was the last thing in the format that could produce a
+    // bound at all. A snapshot beside the recording does the same job with
+    // absolute times and no ceiling (see modules/canvas/recover.proto), which
+    // left keeping this a choice between a dead branch and an exact history.
+    //
+    // Numbers close up rather than reserving the hole. What protects a reader
+    // here is the version gate, not a gap in the numbering - the same reason
+    // field 2 could be reused after the original prototype left it reserved.
+    oneof payload {
+        Header header = 1;
+        Resize resize = 2;
+        Delta delta = 3;
+        Footer footer = 4;
+    }
+
     // When this chunk was written, in epoch milliseconds.
     //
     // On the chunk rather than on each payload, where it used to be repeated
@@ -126,18 +135,5 @@ message RecordingChunk {
     // start; this is when the header was written, and a recording rolled
     // mid-season - after a seal, or after a crash - has the two several days
     // apart. Until now there was nowhere to say so.
-    uint64 timestamp = 6;
-
-    // Field 2 was used once by the original prototype and reserved ever since.
-    // Reusing a reserved number is normally how you produce a file that decodes
-    // into the wrong message - but a reader refuses any version it does not
-    // know (see Header.version), and no pre-v7 chunk is ever handed to this
-    // dispatch. The gate is what makes the number free again.
-    oneof payload {
-        Header header = 1;
-        Resize resize = 2;
-        Keyframe keyframe = 3;
-        Delta delta = 4;
-        Footer footer = 5;
-    }
+    uint64 timestamp = 5;
 }

@@ -7,7 +7,6 @@ import (
 	ore "github.com/pixelate-it/molten/ore"
 )
 
-func u32(v uint32) *uint32 { return &v }
 func u64(v uint64) *uint64 { return &v }
 
 func pixel(x, y int32, colour uint32) *ore.PixelData {
@@ -149,21 +148,6 @@ func TestDigestReframeDropsWhatFallsOutside(t *testing.T) {
 
 	if d.Sum() != kept.Sum() {
 		t.Error("a pixel outside the new window must be dropped")
-	}
-}
-
-// A keyframe carries contents and no geometry, so it can never move anything.
-func TestApplyKeyframeLeavesTheWindowAlone(t *testing.T) {
-	d := NewDigest()
-	d.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
-
-	d.ApplyKeyframe(&ore.Keyframe{
-		Pixels: []*ore.PixelData{placed(1, 1, 0xff0000, 7)},
-	})
-
-	w, h := d.Size()
-	if w != 4 || h != 4 {
-		t.Fatalf("got %dx%d, want the size left alone", w, h)
 	}
 }
 

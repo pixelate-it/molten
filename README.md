@@ -85,11 +85,17 @@ pixel names a place on a plane rather than a slot in a buffer, a resize moves
 the window and the contents come along, and the chunk that says so is twenty
 bytes.
 
-**There are no periodic keyframes either.** They were tried and removed before
-that, for the same reason: a renderer consumes deltas anyway. The cost is that
-seeking to time _T_ means replaying from the start — that is the trade, and it
-is why a derived, rebuildable snapshot index is the obvious next thing to
-build. It belongs beside the file, never in it.
+**And there is no keyframe chunk at all.** Periodic ones were tried and removed
+first, for the same reason: a renderer consumes deltas anyway. The type outlived
+them as a capability nothing produced — and what it still did was carry an
+inexactness, since a pixel it could not offset came back bounded by the moment
+it was written. It was the last thing in the format able to produce a bound.
+A snapshot beside the recording does the same job with absolute times and no
+ceiling, so keeping it was a choice between a dead branch and an exact history.
+
+The cost of having nothing to restate the canvas is that seeking to time _T_
+means replaying from the start. That is the trade, and it is why a derived,
+rebuildable snapshot belongs beside the file — never in it.
 
 ### `Header`
 
@@ -121,18 +127,6 @@ position. **It carries no pixels.**
 - **The only resize signal.** `molten` starts a new output segment on each,
   because an encoder cannot change frame size mid-stream.
 
-### `Keyframe`
-
-A restatement of contents: `timestamp` and `pixels`, and no geometry at all.
-Applying one is applying a `Delta` whose changes happen to describe every
-painted pixel rather than the ones that just moved.
-
-**Nothing writes one.** It is kept because the format is otherwise a pure delta
-log from byte 0, and a periodic snapshot is the obvious thing to add if that
-ever needs a recovery point — or if a season is ever started on a canvas that
-already has artwork on it. Implement it anyway; it costs the same five lines as
-a `Delta`.
-
 ### `Delta`
 
 `timestamp` plus the pixels that changed. Written once per flush window (15s in
@@ -154,8 +148,8 @@ interrupted one: a clean shutdown, a redeploy and a crash all leave a file that
 simply stops after a valid chunk. The footer is the difference. A writer that
 finds one on a file it was about to append to knows to leave the file alone.
 
-`total_pixels_placed` counts pixel changes across deltas only — a `Keyframe`
-restates pixels their delta already counted.
+`total_pixels_placed` counts pixel changes across deltas, which is all a
+recording carries.
 
 ---
 
@@ -235,10 +229,10 @@ interval, it costs 2–3 bytes as a varint where an absolute epoch-ms `uint64`
 costs 7 — and the top 40 bits of that would be identical for every pixel in the
 file.
 
-`Keyframe` pixels carry it too, for the same reason a delta's do: a
-restatement that cannot say when a pixel was painted flattens that part of the
-season's history onto the moment it was written. Resizes used to be keyframes,
-so an expansion did exactly that to the whole canvas; that is gone with them.
+Only deltas carry it, because only deltas carry pixels. A restatement of the
+canvas that could not say when a pixel was painted flattened that part of the
+season's history onto the moment it was written — resizes used to do exactly
+that, and keyframes after them. Both are gone.
 
 **Writers MUST set it whenever the placement time is known and differs from the
 chunk's timestamp, and MUST leave it unset otherwise.** So unset means exactly
@@ -291,7 +285,6 @@ The minimum a correct reader does:
 3. For each chunk after that:
     - **resize** → move what you hold onto the new window, dropping anything
       that falls outside it, and cut a new output segment;
-    - **keyframe** → apply its pixels, changing no geometry;
     - **delta** → apply its changes, using each pixel's `offset` for its real
       time;
     - **footer** → the recording is complete; stop.
@@ -353,8 +346,6 @@ for {
         // moves the canvas onto the new window, keeping what is still inside
         state.ApplyResize(chunk.GetResize())
         // an encoder cannot change frame size mid-stream: cut a segment here
-    case chunk.GetKeyframe() != nil:
-        state.ApplyKeyframe(chunk.GetKeyframe())
     case chunk.GetDelta() != nil:
         state.ApplyDelta(chunk.GetDelta())
     case chunk.GetFooter() != nil:
@@ -431,7 +422,7 @@ molten <command> [flags]
 ### `molten info -in season.mltn`
 
 Header fields, canvas size and corner, every resize with its timestamp, and
-keyframe/delta/pixel counts. The cheapest way to find out whether a file is what
+resize/delta/pixel counts. The cheapest way to find out whether a file is what
 you think it is.
 
 It also **verifies the file against its own footer**, which is the only

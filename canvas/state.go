@@ -135,19 +135,6 @@ func (s *State) applyPixel(p *ore.PixelData) {
 	s.img.Pix[off+3] = 0xff
 }
 
-/*
-ApplyKeyframe applies a keyframe: a restatement of contents at the current
-window, with no geometry of its own.
-
-Nothing writes one today - see the note on Keyframe in ore/record.proto - so
-this is exactly ApplyDelta under another name, and deliberately so.
-*/
-func (s *State) ApplyKeyframe(kf *ore.Keyframe) {
-	for _, p := range kf.Pixels {
-		s.applyPixel(p)
-	}
-}
-
 // ApplyDelta applies every change in a delta, in recorded order. To walk them
 // in the order they were painted instead, range over format.PlacementOrder and
 // use [State.ApplySinglePixel].

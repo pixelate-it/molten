@@ -50,9 +50,9 @@ func runInfo(args []string) error {
 	digest := canvas.NewDigest()
 	digest.Reframe(opening)
 
-	var keyframes, deltas, chunkCount int
+	var deltas, chunkCount int
 	// Pixel changes across deltas, which is what Footer.total_pixels_placed
-	// counts - keyframes restate pixels their delta already counted.
+	// counts - and a recording is nothing but the deltas that carry them.
 	var placed uint64
 	var lastTs uint64
 
@@ -95,12 +95,6 @@ func runInfo(args []string) error {
 
 			digest.ApplyResize(resize)
 
-		case chunk.GetKeyframe() != nil:
-			keyframes++
-			lastTs = chunk.Timestamp
-
-			digest.ApplyKeyframe(chunk.GetKeyframe())
-
 		case chunk.GetDelta() != nil:
 			delta := chunk.GetDelta()
 			deltas++
@@ -134,7 +128,6 @@ func runInfo(args []string) error {
 	fmt.Printf("Initial size:  %dx%d\n", opening.Width, opening.Height)
 	fmt.Printf("Current size:  %dx%d\n", currentWidth, currentHeight)
 	fmt.Printf("Corner:        %d,%d\n", minX, minY)
-	fmt.Printf("Keyframes:     %d\n", keyframes)
 	fmt.Printf("Deltas:        %d\n", deltas)
 	fmt.Printf("Pixel changes: %d\n", placed)
 	fmt.Printf("Last ts:       %d\n", lastTs)

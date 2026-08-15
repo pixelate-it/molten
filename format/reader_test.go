@@ -246,18 +246,12 @@ func TestReadHeaderReturnsTheOpeningWindow(t *testing.T) {
 The window lives on Resize chunks and nowhere else, so a header not followed by
 one is a file nothing can decode: a pixel names a coordinate, and without a
 size and a corner there is no way to know which coordinates the canvas covers.
-
-A Keyframe in that slot is not a substitute - it carries contents and no
-geometry, which is exactly the separation this version introduced.
 */
 func TestReadHeaderRequiresAnOpeningResize(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
-	contents := &ore.RecordingChunk{
-		Timestamp: 2,
-		Payload:   &ore.RecordingChunk_Keyframe{Keyframe: &ore.Keyframe{}},
-	}
+	contents := delta(2, 1)
 
 	data, _ := encoded(t, header, contents)
 

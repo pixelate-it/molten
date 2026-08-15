@@ -103,14 +103,6 @@ func (d *Digest) ApplyResize(r *ore.Resize) {
 	d.Reframe(format.ReadWindow(r))
 }
 
-// ApplyKeyframe applies a restatement of contents. Carries no geometry - see
-// [State.ApplyKeyframe].
-func (d *Digest) ApplyKeyframe(kf *ore.Keyframe) {
-	for _, p := range kf.Pixels {
-		d.Apply(p)
-	}
-}
-
 // ApplyDelta applies every change in a delta.
 func (d *Digest) ApplyDelta(delta *ore.Delta) {
 	for _, p := range delta.Changes {

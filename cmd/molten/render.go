@@ -205,13 +205,6 @@ func renderTimeMode(
 				return err
 			}
 
-		case chunk.GetKeyframe() != nil:
-			state.ApplyKeyframe(chunk.GetKeyframe())
-
-			if err := advance(chunk.Timestamp); err != nil {
-				return err
-			}
-
 		case chunk.GetDelta() != nil:
 			if err := applyDeltaOverTime(
 				state, chunk.Timestamp, chunk.GetDelta(), advance,
@@ -312,9 +305,6 @@ func renderActivityMode(
 			if err := emit(); err != nil {
 				return err
 			}
-
-		case chunk.GetKeyframe() != nil:
-			state.ApplyKeyframe(chunk.GetKeyframe())
 
 		case chunk.GetDelta() != nil:
 			/* Recorded order is first-touch order within the flush window, not
