@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: pixel_data.proto
+// source: pixel.proto
 
 package ore
 
@@ -23,19 +23,13 @@ const (
 
 type PixelData struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Position on the canvas, encoded as y * width + x - where `width` is
-	// whichever one was in force when this chunk was written, i.e. the one on
-	// the nearest *preceding* sized Keyframe, and NOT the recording's final
-	// width.
-	//
-	// A recording can resize mid-file, so anything replaying history across
-	// that boundary has to carry the width forward per keyframe. Decoding the
-	// whole file against a single global width silently misplaces every pixel
-	// written before the last resize.
-	Id     uint32  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Color  uint32  `protobuf:"varint,2,opt,name=color,proto3" json:"color,omitempty"`
-	Author *uint64 `protobuf:"varint,3,opt,name=author,proto3,oneof" json:"author,omitempty"`
-	Tag    *uint64 `protobuf:"varint,4,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
+	// Where the pixel is, in the recording's own coordinates: signed, fixed to
+	// the canvas as the recording started, unaffected by any later resize.
+	X      int32   `protobuf:"zigzag32,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y      int32   `protobuf:"zigzag32,2,opt,name=y,proto3" json:"y,omitempty"`
+	Color  uint32  `protobuf:"varint,3,opt,name=color,proto3" json:"color,omitempty"`
+	Author *uint64 `protobuf:"varint,4,opt,name=author,proto3,oneof" json:"author,omitempty"`
+	Tag    *uint64 `protobuf:"varint,5,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
 	// Milliseconds *before* the enclosing chunk's timestamp that this pixel
 	// was actually placed.
 	//
@@ -70,14 +64,14 @@ type PixelData struct {
 	//
 	// Readers must not treat unset as 0. Fall back to the chunk's timestamp
 	// and carry the fact that it is a bound (see format.PlacedAt).
-	Offset        *uint32 `protobuf:"varint,5,opt,name=offset,proto3,oneof" json:"offset,omitempty"`
+	Offset        *uint32 `protobuf:"varint,6,opt,name=offset,proto3,oneof" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PixelData) Reset() {
 	*x = PixelData{}
-	mi := &file_pixel_data_proto_msgTypes[0]
+	mi := &file_pixel_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -89,7 +83,7 @@ func (x *PixelData) String() string {
 func (*PixelData) ProtoMessage() {}
 
 func (x *PixelData) ProtoReflect() protoreflect.Message {
-	mi := &file_pixel_data_proto_msgTypes[0]
+	mi := &file_pixel_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -102,12 +96,19 @@ func (x *PixelData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PixelData.ProtoReflect.Descriptor instead.
 func (*PixelData) Descriptor() ([]byte, []int) {
-	return file_pixel_data_proto_rawDescGZIP(), []int{0}
+	return file_pixel_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *PixelData) GetId() uint32 {
+func (x *PixelData) GetX() int32 {
 	if x != nil {
-		return x.Id
+		return x.X
+	}
+	return 0
+}
+
+func (x *PixelData) GetY() int32 {
+	if x != nil {
+		return x.Y
 	}
 	return 0
 }
@@ -140,39 +141,40 @@ func (x *PixelData) GetOffset() uint32 {
 	return 0
 }
 
-var File_pixel_data_proto protoreflect.FileDescriptor
+var File_pixel_proto protoreflect.FileDescriptor
 
-const file_pixel_data_proto_rawDesc = "" +
+const file_pixel_proto_rawDesc = "" +
 	"\n" +
-	"\x10pixel_data.proto\x12\n" +
-	"molten.ore\"\xa0\x01\n" +
-	"\tPixelData\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\rR\x02id\x12\x14\n" +
-	"\x05color\x18\x02 \x01(\rR\x05color\x12\x1b\n" +
-	"\x06author\x18\x03 \x01(\x04H\x00R\x06author\x88\x01\x01\x12\x15\n" +
-	"\x03tag\x18\x04 \x01(\x04H\x01R\x03tag\x88\x01\x01\x12\x1b\n" +
-	"\x06offset\x18\x05 \x01(\rH\x02R\x06offset\x88\x01\x01B\t\n" +
+	"\vpixel.proto\x12\n" +
+	"molten.ore\"\xac\x01\n" +
+	"\tPixelData\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x11R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x11R\x01y\x12\x14\n" +
+	"\x05color\x18\x03 \x01(\rR\x05color\x12\x1b\n" +
+	"\x06author\x18\x04 \x01(\x04H\x00R\x06author\x88\x01\x01\x12\x15\n" +
+	"\x03tag\x18\x05 \x01(\x04H\x01R\x03tag\x88\x01\x01\x12\x1b\n" +
+	"\x06offset\x18\x06 \x01(\rH\x02R\x06offset\x88\x01\x01B\t\n" +
 	"\a_authorB\x06\n" +
 	"\x04_tagB\t\n" +
 	"\a_offsetB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (
-	file_pixel_data_proto_rawDescOnce sync.Once
-	file_pixel_data_proto_rawDescData []byte
+	file_pixel_proto_rawDescOnce sync.Once
+	file_pixel_proto_rawDescData []byte
 )
 
-func file_pixel_data_proto_rawDescGZIP() []byte {
-	file_pixel_data_proto_rawDescOnce.Do(func() {
-		file_pixel_data_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pixel_data_proto_rawDesc), len(file_pixel_data_proto_rawDesc)))
+func file_pixel_proto_rawDescGZIP() []byte {
+	file_pixel_proto_rawDescOnce.Do(func() {
+		file_pixel_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pixel_proto_rawDesc), len(file_pixel_proto_rawDesc)))
 	})
-	return file_pixel_data_proto_rawDescData
+	return file_pixel_proto_rawDescData
 }
 
-var file_pixel_data_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
-var file_pixel_data_proto_goTypes = []any{
+var file_pixel_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_pixel_proto_goTypes = []any{
 	(*PixelData)(nil), // 0: molten.ore.PixelData
 }
-var file_pixel_data_proto_depIdxs = []int32{
+var file_pixel_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
 	0, // [0:0] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
@@ -180,27 +182,27 @@ var file_pixel_data_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_pixel_data_proto_init() }
-func file_pixel_data_proto_init() {
-	if File_pixel_data_proto != nil {
+func init() { file_pixel_proto_init() }
+func file_pixel_proto_init() {
+	if File_pixel_proto != nil {
 		return
 	}
-	file_pixel_data_proto_msgTypes[0].OneofWrappers = []any{}
+	file_pixel_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pixel_data_proto_rawDesc), len(file_pixel_data_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pixel_proto_rawDesc), len(file_pixel_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_pixel_data_proto_goTypes,
-		DependencyIndexes: file_pixel_data_proto_depIdxs,
-		MessageInfos:      file_pixel_data_proto_msgTypes,
+		GoTypes:           file_pixel_proto_goTypes,
+		DependencyIndexes: file_pixel_proto_depIdxs,
+		MessageInfos:      file_pixel_proto_msgTypes,
 	}.Build()
-	File_pixel_data_proto = out.File
-	file_pixel_data_proto_goTypes = nil
-	file_pixel_data_proto_depIdxs = nil
+	File_pixel_proto = out.File
+	file_pixel_proto_goTypes = nil
+	file_pixel_proto_depIdxs = nil
 }

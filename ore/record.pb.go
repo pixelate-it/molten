@@ -90,34 +90,8 @@ type Keyframe struct {
 	// canvas contents at the current size. Note the writer emits no periodic
 	// keyframes: repeated full-canvas snapshots dominated the file size for
 	// something no reader consumed.
-	Width  *uint32 `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
-	Height *uint32 `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
-	// Cumulative offset of this chunk's local (0, 0) from the recording's
-	// canonical (0, 0):
-	//
-	//	canonical = local - origin
-	//	local     = canonical + origin
-	//
-	// A resize grows the canvas around the existing artwork, so without this
-	// every coordinate in the file shifts whenever the anchor is anything but
-	// top-left, and a "pixel (12, 40)" recorded on day one names a different
-	// piece of art on day three. Canonical coordinates are the ones that
-	// survive: they are fixed to the content, and are what a permalink, a
-	// client-side stencil, or a cross-implementation checksum should use.
-	//
-	// 0 on the opening (sizing) keyframe, which is what defines the canonical
-	// space. Always >= 0 afterwards - resizes are strictly grow-only and an
-	// anchor only ever adds space around the old content (see anchorOffset),
-	// so the origin can only move away from local (0, 0), never behind it.
-	//
-	// Note that a *canonical* coordinate may well be negative: anything
-	// painted into space added on the left or the top has local < origin.
-	//
-	// Unset means 0 - which is what every recording written before this field
-	// claims, correctly for the ones that never resized and by necessity for
-	// the ones that did, since nothing on disk recorded the anchor.
-	OriginX       *uint32 `protobuf:"varint,5,opt,name=origin_x,json=originX,proto3,oneof" json:"origin_x,omitempty"`
-	OriginY       *uint32 `protobuf:"varint,6,opt,name=origin_y,json=originY,proto3,oneof" json:"origin_y,omitempty"`
+	Width         *uint32 `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
+	Height        *uint32 `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -176,20 +150,6 @@ func (x *Keyframe) GetWidth() uint32 {
 func (x *Keyframe) GetHeight() uint32 {
 	if x != nil && x.Height != nil {
 		return *x.Height
-	}
-	return 0
-}
-
-func (x *Keyframe) GetOriginX() uint32 {
-	if x != nil && x.OriginX != nil {
-		return *x.OriginX
-	}
-	return 0
-}
-
-func (x *Keyframe) GetOriginY() uint32 {
-	if x != nil && x.OriginY != nil {
-		return *x.OriginY
 	}
 	return 0
 }
@@ -273,8 +233,14 @@ func (x *Footer) GetCanvasChecksum() uint64 {
 }
 
 type Header struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	Version uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The compatibility gate, and load-bearing as of the coordinate change:
+	// a reader MUST refuse a version it does not know. Before that it was a
+	// diagnostic nothing branched on, which left an older binary free to read
+	// a newer file and lay every pixel out against an addressing the file no
+	// longer uses - wrong, and only visibly so once somebody watched the
+	// render.
+	Version uint32 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	// Season name.
 	Name      string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	StartedAt uint64 `protobuf:"varint,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
@@ -479,21 +445,17 @@ var File_record_proto protoreflect.FileDescriptor
 const file_record_proto_rawDesc = "" +
 	"\n" +
 	"\frecord.proto\x12\n" +
-	"molten.ore\x1a\x10pixel_data.proto\"V\n" +
+	"molten.ore\x1a\vpixel.proto\"V\n" +
 	"\x05Delta\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12/\n" +
-	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"\xfe\x01\n" +
+	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"\xa4\x01\n" +
 	"\bKeyframe\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12-\n" +
 	"\x06pixels\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\x12\x19\n" +
 	"\x05width\x18\x03 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
-	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01\x12\x1e\n" +
-	"\borigin_x\x18\x05 \x01(\rH\x02R\aoriginX\x88\x01\x01\x12\x1e\n" +
-	"\borigin_y\x18\x06 \x01(\rH\x03R\aoriginY\x88\x01\x01B\b\n" +
+	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01B\b\n" +
 	"\x06_widthB\t\n" +
-	"\a_heightB\v\n" +
-	"\t_origin_xB\v\n" +
-	"\t_origin_y\"\x7f\n" +
+	"\a_height\"\x7f\n" +
 	"\x06Footer\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12.\n" +
 	"\x13total_pixels_placed\x18\x02 \x01(\x04R\x11totalPixelsPlaced\x12'\n" +
@@ -558,7 +520,7 @@ func file_record_proto_init() {
 	if File_record_proto != nil {
 		return
 	}
-	file_pixel_data_proto_init()
+	file_pixel_proto_init()
 	file_record_proto_msgTypes[1].OneofWrappers = []any{}
 	file_record_proto_msgTypes[3].OneofWrappers = []any{}
 	file_record_proto_msgTypes[4].OneofWrappers = []any{
