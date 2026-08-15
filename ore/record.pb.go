@@ -90,8 +90,24 @@ type Keyframe struct {
 	// canvas contents at the current size. Note the writer emits no periodic
 	// keyframes: repeated full-canvas snapshots dominated the file size for
 	// something no reader consumed.
-	Width         *uint32 `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
-	Height        *uint32 `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
+	Width  *uint32 `protobuf:"varint,3,opt,name=width,proto3,oneof" json:"width,omitempty"`
+	Height *uint32 `protobuf:"varint,4,opt,name=height,proto3,oneof" json:"height,omitempty"`
+	// The canvas' top-left corner, in the same signed coordinates a PixelData
+	// is named by, and carried under the same rule as width and height: with
+	// them or not at all.
+	//
+	// A size alone never said where the canvas was. Before pixels carried
+	// coordinates that was hidden, because a pixel's id was an offset into the
+	// canvas and so could only mean a place inside it; the corner rode along
+	// as `origin_x`/`origin_y`, phrased as a translation to undo. Now that a
+	// pixel names a place on the plane, the canvas has to name the part of the
+	// plane it covers, or a reader given a sparse keyframe - white pixels are
+	// skipped - has no way to work out which region those pixels sit in.
+	//
+	// Absent means zero, which is right for the opening keyframe of every
+	// season: the origin is defined as the canvas' corner at the start.
+	MinX          *int32 `protobuf:"zigzag32,5,opt,name=min_x,json=minX,proto3,oneof" json:"min_x,omitempty"`
+	MinY          *int32 `protobuf:"zigzag32,6,opt,name=min_y,json=minY,proto3,oneof" json:"min_y,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -154,6 +170,20 @@ func (x *Keyframe) GetHeight() uint32 {
 	return 0
 }
 
+func (x *Keyframe) GetMinX() int32 {
+	if x != nil && x.MinX != nil {
+		return *x.MinX
+	}
+	return 0
+}
+
+func (x *Keyframe) GetMinY() int32 {
+	if x != nil && x.MinY != nil {
+		return *x.MinY
+	}
+	return 0
+}
+
 // Seals a recording: written once, as the last chunk, when the season it
 // records is over. Its presence is the only thing that distinguishes a
 // finished recording from one whose writer is still running or died mid-flush
@@ -166,12 +196,12 @@ type Footer struct {
 	// restates pixels that were already counted when their delta was written.
 	TotalPixelsPlaced uint64 `protobuf:"varint,2,opt,name=total_pixels_placed,json=totalPixelsPlaced,proto3" json:"total_pixels_placed,omitempty"`
 	// xxHash64 (seed 0) over the canvas as of this footer, digesting every
-	// non-blank pixel sorted by canonical (y, x) as a 12-byte little-endian
-	// record: int32 canonical_x, int32 canonical_y, uint32 color (0x00RRGGBB).
+	// non-blank pixel sorted by (y, x) as a 12-byte little-endian record:
+	// int32 x, int32 y, uint32 color (0x00RRGGBB).
 	//
-	// Canonical rather than raw ids on purpose - an id is y * width + x, so
-	// hashing ids would give the same physical artwork a different digest
-	// either side of a resize.
+	// The coordinates are the pixels' own, which is what makes the same
+	// artwork digest the same either side of a resize. That used to need
+	// saying, back when a pixel was addressed by an offset into the canvas.
 	//
 	// Non-cryptographic: this catches a reader implementation (Go, C, the
 	// TypeScript writer) that disagrees about what the file means, not an
@@ -448,14 +478,18 @@ const file_record_proto_rawDesc = "" +
 	"molten.ore\x1a\vpixel.proto\"V\n" +
 	"\x05Delta\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12/\n" +
-	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"\xa4\x01\n" +
+	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"\xec\x01\n" +
 	"\bKeyframe\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12-\n" +
 	"\x06pixels\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\x12\x19\n" +
 	"\x05width\x18\x03 \x01(\rH\x00R\x05width\x88\x01\x01\x12\x1b\n" +
-	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01B\b\n" +
+	"\x06height\x18\x04 \x01(\rH\x01R\x06height\x88\x01\x01\x12\x18\n" +
+	"\x05min_x\x18\x05 \x01(\x11H\x02R\x04minX\x88\x01\x01\x12\x18\n" +
+	"\x05min_y\x18\x06 \x01(\x11H\x03R\x04minY\x88\x01\x01B\b\n" +
 	"\x06_widthB\t\n" +
-	"\a_height\"\x7f\n" +
+	"\a_heightB\b\n" +
+	"\x06_min_xB\b\n" +
+	"\x06_min_y\"\x7f\n" +
 	"\x06Footer\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12.\n" +
 	"\x13total_pixels_placed\x18\x02 \x01(\x04R\x11totalPixelsPlaced\x12'\n" +

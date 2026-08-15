@@ -10,7 +10,7 @@ import (
 // still blank, so anything else leaves the omitted ones showing through.
 func TestResizeBlanksToOpaqueWhite(t *testing.T) {
 	s := NewState()
-	s.Resize(3, 2)
+	s.Resize(3, 2, 0, 0)
 
 	if !s.Ready() {
 		t.Fatal("a sized canvas is ready")
@@ -35,23 +35,25 @@ func TestNewStateIsNotReady(t *testing.T) {
 	}
 }
 
-// Ids are y*width+x, so the width in force is what decides where a pixel lands.
-func TestApplyPlacesByIdAgainstTheCurrentWidth(t *testing.T) {
+// A pixel names a place on the plane, so where it lands depends on where the
+// canvas is - not on how wide it happens to be.
+func TestApplyPlacesByCoordinateAgainstTheCurrentCorner(t *testing.T) {
 	s := NewState()
-	s.Resize(4, 4)
-	s.ApplySinglePixel(&ore.PixelData{Id: 6, Color: 0x112233}) // (2,1)
+	s.Resize(4, 4, -2, -2)
+	s.ApplySinglePixel(&ore.PixelData{X: 0, Y: 0, Color: 0x112233})
 
-	if colour, ok := s.ColorAt(2, 1); !ok || colour != 0x112233 {
-		t.Fatalf("got %06x ok=%v at (2,1)", colour, ok)
+	// The origin is two in from the canvas' top-left corner.
+	if colour, ok := s.ColorAt(0, 0); !ok || colour != 0x112233 {
+		t.Fatalf("got %06x ok=%v at (0,0)", colour, ok)
 	}
-	if colour, _ := s.ColorAt(1, 2); colour == 0x112233 {
-		t.Error("id 6 on a 4-wide canvas is (2,1), not (1,2)")
+	if got := s.Image().Pix[s.Image().PixOffset(2, 2)]; got != 0x11 {
+		t.Errorf("got %02x in the image at row 2, column 2 - the corner was ignored", got)
 	}
 }
 
 func TestColorAtRejectsOutOfBounds(t *testing.T) {
 	s := NewState()
-	s.Resize(2, 2)
+	s.Resize(2, 2, 0, 0)
 
 	for _, at := range [][2]int{{-1, 0}, {0, -1}, {2, 0}, {0, 2}} {
 		if _, ok := s.ColorAt(at[0], at[1]); ok {
@@ -64,29 +66,34 @@ func TestColorAtRejectsOutOfBounds(t *testing.T) {
 // from the old size that it does not restate is gone.
 func TestApplyKeyframeResizeBlanksFirst(t *testing.T) {
 	s := NewState()
-	s.Resize(4, 4)
-	s.ApplySinglePixel(&ore.PixelData{Id: 0, Color: 0xff0000})
+	s.Resize(4, 4, 0, 0)
+	s.ApplySinglePixel(&ore.PixelData{X: 0, Y: 0, Color: 0xff0000})
 
 	w, h := uint32(8), uint32(8)
-	if !s.ApplyKeyframe(&ore.Keyframe{Width: &w, Height: &h}) {
+	minX, minY := int32(-2), int32(-2)
+	if !s.ApplyKeyframe(&ore.Keyframe{Width: &w, Height: &h, MinX: &minX, MinY: &minY}) {
 		t.Fatal("a keyframe carrying a size is a resize")
 	}
 
-	if s.Width != 8 || s.Height != 8 {
-		t.Fatalf("got %dx%d, want 8x8", s.Width, s.Height)
+	if s.Width != 8 || s.Height != 8 || s.MinX != -2 || s.MinY != -2 {
+		t.Fatalf("got %dx%d at %d,%d, want 8x8 at -2,-2", s.Width, s.Height, s.MinX, s.MinY)
 	}
 	if colour, _ := s.ColorAt(0, 0); colour != BlankColour {
 		t.Errorf("got %06x at (0,0), want the resize to have blanked it", colour)
 	}
 }
 
-// Out-of-range ids are dropped, not panicked on.
-func TestApplyIgnoresIdsPastTheCanvas(t *testing.T) {
+// Coordinates off the canvas are dropped, not panicked on.
+func TestApplyIgnoresCoordinatesPastTheCanvas(t *testing.T) {
 	s := NewState()
-	s.Resize(2, 2)
+	s.Resize(2, 2, 0, 0)
 
-	s.ApplySinglePixel(&ore.PixelData{Id: 4, Color: 0xff0000}) // one past the end
-	s.ApplySinglePixel(&ore.PixelData{Id: 9999, Color: 0xff0000})
+	// One column past the right edge, which is a valid offset one row down -
+	// the case a single check against the area would let through.
+	s.ApplySinglePixel(&ore.PixelData{X: 2, Y: 0, Color: 0xff0000})
+	s.ApplySinglePixel(&ore.PixelData{X: -1, Y: 0, Color: 0xff0000})
+	s.ApplySinglePixel(&ore.PixelData{X: 0, Y: -1, Color: 0xff0000})
+	s.ApplySinglePixel(&ore.PixelData{X: 9999, Y: 9999, Color: 0xff0000})
 
 	for y := range 2 {
 		for x := range 2 {
@@ -102,8 +109,8 @@ func TestApplyIgnoresIdsPastTheCanvas(t *testing.T) {
 func TestApplyBeforeAnySizeIsSafe(t *testing.T) {
 	s := NewState()
 
-	s.ApplySinglePixel(&ore.PixelData{Id: 0, Color: 0xff0000})
-	s.ApplyDelta(&ore.Delta{Changes: []*ore.PixelData{{Id: 1, Color: 0xff0000}}})
+	s.ApplySinglePixel(&ore.PixelData{X: 0, Y: 0, Color: 0xff0000})
+	s.ApplyDelta(&ore.Delta{Changes: []*ore.PixelData{{X: 1, Y: 0, Color: 0xff0000}}})
 
 	if s.Image() != nil {
 		t.Fatal("no size means no image")

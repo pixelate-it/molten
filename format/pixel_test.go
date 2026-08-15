@@ -6,8 +6,9 @@ import (
 	ore "github.com/pixelate-it/molten/ore"
 )
 
-func px(id uint32, offset *uint32) *ore.PixelData {
-	return &ore.PixelData{Id: id, Color: 0x112233, Offset: offset}
+// One pixel per column of row 0, so a single number names it throughout.
+func px(x int32, offset *uint32) *ore.PixelData {
+	return &ore.PixelData{X: x, Y: 0, Color: 0x112233, Offset: offset}
 }
 
 func u32(v uint32) *uint32 { return &v }
@@ -33,10 +34,10 @@ func TestPlacementOrderSortsByOffset(t *testing.T) {
 		t.Fatal("expected offsets to be detected")
 	}
 
-	want := []uint32{3, 1, 2}
-	for i, id := range want {
-		if ordered[i].Id != id {
-			t.Errorf("position %d: got id %d, want %d", i, ordered[i].Id, id)
+	want := []int32{3, 1, 2}
+	for i, x := range want {
+		if ordered[i].X != x {
+			t.Errorf("position %d: got x %d, want %d", i, ordered[i].X, x)
 		}
 	}
 }

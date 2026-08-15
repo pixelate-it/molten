@@ -41,18 +41,18 @@ func runInfo(args []string) error {
 	}
 
 	type resizeEvent struct {
-		ts               uint64
-		width, height    uint32
-		originX, originY uint32
+		ts            uint64
+		width, height uint32
+		minX, minY    int32
 	}
 
-	initialOriginX, initialOriginY := format.KeyframeOrigin(initialKf)
+	initialMinX, initialMinY := format.KeyframeCorner(initialKf)
 	resizes := []resizeEvent{{
-		ts:      initialKf.Timestamp,
-		width:   width,
-		height:  height,
-		originX: initialOriginX,
-		originY: initialOriginY,
+		ts:     initialKf.Timestamp,
+		width:  width,
+		height: height,
+		minX:   initialMinX,
+		minY:   initialMinY,
 	}}
 
 	digest := canvas.NewDigest()
@@ -97,14 +97,14 @@ func runInfo(args []string) error {
 			lastTs = kf.Timestamp
 
 			if format.IsResize(kf) {
-				originX, originY := format.KeyframeOrigin(kf)
+				minX, minY := format.KeyframeCorner(kf)
 
 				resizes = append(resizes, resizeEvent{
-					ts:      kf.Timestamp,
-					width:   *kf.Width,
-					height:  *kf.Height,
-					originX: originX,
-					originY: originY,
+					ts:     kf.Timestamp,
+					width:  *kf.Width,
+					height: *kf.Height,
+					minX:   minX,
+					minY:   minY,
 				})
 			}
 
@@ -137,11 +137,11 @@ func runInfo(args []string) error {
 		fmt.Printf("Scheduled end: %d\n", *header.EndsAt)
 	}
 	currentWidth, currentHeight := digest.Size()
-	originX, originY := digest.Origin()
+	minX, minY := digest.Corner()
 
 	fmt.Printf("Initial size:  %dx%d\n", width, height)
 	fmt.Printf("Current size:  %dx%d\n", currentWidth, currentHeight)
-	fmt.Printf("Origin:        %d,%d\n", originX, originY)
+	fmt.Printf("Corner:        %d,%d\n", minX, minY)
 	fmt.Printf("Keyframes:     %d (excluding initial)\n", keyframes)
 	fmt.Printf("Deltas:        %d\n", deltas)
 	fmt.Printf("Pixel changes: %d\n", placed)
@@ -158,8 +158,8 @@ func runInfo(args []string) error {
 	if len(resizes) > 1 {
 		fmt.Printf("Resizes:       %d\n", len(resizes)-1)
 		for i, r := range resizes {
-			fmt.Printf("  [%d] %dx%d origin %d,%d @ ts=%d\n",
-				i+1, r.width, r.height, r.originX, r.originY, r.ts)
+			fmt.Printf("  [%d] %dx%d at %d,%d @ ts=%d\n",
+				i+1, r.width, r.height, r.minX, r.minY, r.ts)
 		}
 	}
 

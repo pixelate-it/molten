@@ -11,23 +11,33 @@ Two projections of the same history, because they answer different questions:
 Neither reads a file. Feed them chunks from package format.
 
 One rule both share, and the easiest thing to get wrong in a new reader: a
-pixel's id is y*width+x against *whichever width was in force when its chunk
-was written*, not the recording's final width. Apply chunks in order through
-one of these and that is handled; decode a whole file against one global width
-and every pixel written before the last resize is silently misplaced.
+pixel names a coordinate on a fixed plane, not a place in the canvas, and the
+canvas is a window onto that plane which moves. So the canvas' corner has to
+come from the last sizing keyframe seen, not from the first one and not from
+zero - a season expanded leftwards puts its corner in the negative, and a
+reader that assumes (0, 0) draws every pixel in the wrong place.
+
+That is the one thing v6 changed, and why a v5 file is refused outright rather
+than read: the bytes are identical and only their meaning differs.
 */
 package canvas
 
 import (
 	"image"
 
+	"github.com/pixelate-it/molten/format"
 	ore "github.com/pixelate-it/molten/ore"
 )
 
 // State is a canvas replayed into an RGBA image.
 type State struct {
 	Width, Height uint32
-	img           *image.RGBA
+
+	// MinX and MinY are the canvas' top-left corner, in the coordinates the
+	// pixels are named by. Negative once a season has grown left or up.
+	MinX, MinY int32
+
+	img *image.RGBA
 }
 
 // NewState returns a canvas with no size yet. Nothing can be applied until a
@@ -50,8 +60,9 @@ Blank is white and fully opaque, which is what a resize keyframe assumes: it
 omits every pixel that is still white with nobody's name on it, so the fill has
 to match or the omitted pixels come out transparent.
 */
-func (s *State) Resize(width, height uint32) {
+func (s *State) Resize(width, height uint32, minX, minY int32) {
 	s.Width, s.Height = width, height
+	s.MinX, s.MinY = minX, minY
 	s.img = image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
 
 	for i := 0; i < len(s.img.Pix); i += 4 {
@@ -66,14 +77,17 @@ func (s *State) applyPixel(p *ore.PixelData) {
 	if s.img == nil {
 		return
 	}
-	area := uint64(s.Width) * uint64(s.Height)
-	if uint64(p.Id) >= area {
+	/* Per axis, and it has to be: a column past the right edge is still a
+	 * valid offset into the image - one row down, in the first columns - so a
+	 * single check against the area would smear a pixel along the left edge
+	 * instead of dropping it. */
+	col := int(p.X - s.MinX)
+	row := int(p.Y - s.MinY)
+	if col < 0 || row < 0 || col >= int(s.Width) || row >= int(s.Height) {
 		return
 	}
 
-	x := int(p.Id) % int(s.Width)
-	y := int(p.Id) / int(s.Width)
-	off := s.img.PixOffset(x, y)
+	off := s.img.PixOffset(col, row)
 
 	s.img.Pix[off+0] = byte(p.Color >> 16)
 	s.img.Pix[off+1] = byte(p.Color >> 8)
@@ -89,7 +103,8 @@ mid-stream, so a true here is where a new output segment starts.
 */
 func (s *State) ApplyKeyframe(kf *ore.Keyframe) (resized bool) {
 	if kf.Width != nil && kf.Height != nil {
-		s.Resize(*kf.Width, *kf.Height)
+		minX, minY := format.KeyframeCorner(kf)
+		s.Resize(*kf.Width, *kf.Height, minX, minY)
 		resized = true
 	}
 	for _, p := range kf.Pixels {
@@ -115,13 +130,17 @@ func (s *State) ApplySinglePixel(p *ore.PixelData) {
 }
 
 // ColorAt returns the colour at (x, y) as 0x00RRGGBB, and false if the point is
-// outside the canvas or nothing has sized it yet.
+// outside the canvas or nothing has sized it yet. The coordinates are the
+// pixels' own, so they are signed and need not start at the origin.
 func (s *State) ColorAt(x, y int) (uint32, bool) {
-	if s.img == nil || x < 0 || y < 0 || x >= int(s.Width) || y >= int(s.Height) {
+	col := x - int(s.MinX)
+	row := y - int(s.MinY)
+
+	if s.img == nil || col < 0 || row < 0 || col >= int(s.Width) || row >= int(s.Height) {
 		return 0, false
 	}
 
-	off := s.img.PixOffset(x, y)
+	off := s.img.PixOffset(col, row)
 	return uint32(s.img.Pix[off+0])<<16 |
 		uint32(s.img.Pix[off+1])<<8 |
 		uint32(s.img.Pix[off+2]), true

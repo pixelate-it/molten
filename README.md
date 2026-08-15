@@ -92,7 +92,7 @@ refused rather than guessed at — convert it first.
 ### `Keyframe`
 
 A full-canvas snapshot: `timestamp`, `pixels`, and — when it is a sizing or
-resize keyframe — `width`, `height`, `origin_x`, `origin_y`.
+resize keyframe — `width`, `height`, `min_x`, `min_y`.
 
 - **Sparse.** Pixels that are white with nobody's name on them are omitted,
   because a resize fills the new canvas with white anyway.
@@ -130,45 +130,57 @@ restates pixels their delta already counted.
 
 ## Coordinates
 
-### `PixelData.id` is local, and local changes
+### A pixel names a place, not a slot
 
-A pixel's position is `y * width + x`, where `width` is **whichever one was in
-force when that chunk was written** — i.e. from the nearest preceding sized
-keyframe, not the recording's final width.
+`PixelData.x` and `PixelData.y` are **signed coordinates on a fixed plane**.
+The origin is the canvas' top-left corner as the season started, and it never
+moves for the life of the recording.
 
-This is the single easiest thing to get wrong when writing a new reader.
-Decoding a whole file against one global width silently misplaces every pixel
-written before the last resize. Carry the width forward per keyframe.
+That is the whole of it. The same pair means the same pixel in every chunk of
+the file, before and after any number of resizes — no width to carry forward,
+nothing to convert, nothing a reader can get subtly wrong.
 
-### Canonical coordinates and `origin`
+It was not always so. Up to `v5` a pixel carried `id = y * width + x` against
+whichever width was in force when its chunk was written, plus an `origin` on
+each keyframe to convert back to something stable. Decoding such a file against
+one global width silently misplaced every pixel written before the last resize,
+and that was the single easiest thing to get wrong in a new reader.
 
-A resize is grow-only, and it grows the canvas _around_ the existing artwork
-according to an anchor. So unless the anchor was top-left, every pixel gets a
-new `(x, y)` while nothing has actually moved: a 100×100 canvas grown to
-200×200 anchored centre puts what was at `(10, 10)` at `(60, 60)`.
+### The canvas is a window, and the window moves
 
-`origin_x`/`origin_y` on each keyframe are the accumulated anchor offset:
+A resize grows the canvas *around* the artwork according to an anchor, so the
+artwork does not move — the canvas' own corner does. `min_x`/`min_y` on a
+sizing keyframe say where that corner is, in the same coordinates the pixels
+use:
 
 ```
-canonical = local - origin
-local     = canonical + origin
+column = x - min_x
+row    = y - min_y
 ```
 
-Canonical coordinates are fixed to the _content_, so they are the ones that
-survive an expansion — which is what a permalink, a client-side stencil, or a
-cross-implementation checksum has to be expressed in. The anchor itself is
-never recorded, only its result, so a reader cannot re-derive this: it has to
-read it off the keyframe.
+A size alone never located a canvas. That was invisible while a pixel carried
+an offset *into* the canvas, since an offset has nowhere else to point; now
+that a pixel names a place on the plane, the keyframe has to say which part of
+the plane it covers. A keyframe is sparse, so its pixels cannot imply it.
 
 Two things worth stating plainly:
 
-- The **origin** is never negative. Grow-only plus an anchor that only adds
-  space around the old content means it can only move away from local `(0, 0)`.
-- A **canonical coordinate** absolutely can be. Anything painted into space an
-  expansion added on the left or the top has `local < origin`.
+- **`min_x`/`min_y` go negative**, as soon as a season is expanded leftwards or
+  upwards. They are a coordinate, not a distance.
+- **Absent means zero**, which is right for every season's opening keyframe:
+  the origin is *defined* as the corner the canvas started on.
 
-A recording written before this field has no origin; zero is the only
-defensible reading, and it is correct for every recording that never resized.
+### Versions are checked, and this is why
+
+`Header.version` was decorative until `v6` — every earlier break was caught
+structurally, by a file having no sized opening keyframe. `v5` and `v6` are
+structurally identical: same chunks, same field numbers, same everything. They
+differ only in what the two numbers inside a `PixelData` mean.
+
+Nothing in the bytes gives that away, so `format.ReadHeader` refuses a version
+it does not know (`ErrUnknownVersion`) rather than reading a season and laying
+every pixel out wrong. A wrong render is the kind of failure nobody notices
+until they watch the video.
 
 ### `PixelData.offset`
 
@@ -234,7 +246,7 @@ The minimum a correct reader does:
    that is the only place a canvas size is ever declared.
 3. For each chunk after that:
     - **sized keyframe** → blank the canvas at the new size, adopt its
-      `origin_x`/`origin_y`, apply its pixels, cut a new output segment;
+      `min_x`/`min_y`, apply its pixels, cut a new output segment;
     - **unsized keyframe** → apply its pixels;
     - **delta** → apply its changes, using each pixel's `offset` for its real
       time;
@@ -345,10 +357,10 @@ prints, and what a new reader in another language should be tested against.
 
 ### Two traps the API takes care of
 
-- **Pixel ids are relative to the width in force at the time**, not the
-  recording's final width. Applying chunks in order through a `State` or a
-  `Digest` handles it; decoding a whole file against one global width silently
-  misplaces everything written before the last resize.
+- **The canvas' corner moves, and a pixel's coordinates do not.** Applying
+  chunks in order through a `State` or a `Digest` carries the corner forward
+  for you; assuming the canvas starts at `(0, 0)` draws a leftward-expanded
+  season entirely in the wrong place.
 - **A delta's recorded order is first-touch order, not placement order.**
   `format.PlacementOrder(delta)` returns the pixels in the order they were
   painted, and `format.PlacedAt(chunkTimestamp, pixel)` resolves when one was.
@@ -367,7 +379,7 @@ molten <command> [flags]
 
 ### `molten info -in season.mltn`
 
-Header fields, canvas size and origin, every resize with its timestamp, and
+Header fields, canvas size and corner, every resize with its timestamp, and
 keyframe/delta/pixel counts. The cheapest way to find out whether a file is what
 you think it is.
 

@@ -42,6 +42,19 @@ var (
 	// MaxChunkSize. Both readings are treated as corruption rather than as a
 	// very large chunk.
 	ErrCorruptChunkLength = errors.New("mltm: invalid chunk length, file is corrupt")
+	// ErrUnknownVersion means the Header declares a format version this binary
+	// does not know how to read.
+	//
+	// This is the whole compatibility story as of v6, and it has to be: v5 and
+	// v6 are structurally identical - same chunks, same field numbers - and
+	// differ only in what the two numbers inside a PixelData mean. v5 said
+	// "offset into the canvas", v6 says "coordinate on the plane". Nothing
+	// about the bytes gives that away, so a reader that does not check this
+	// lays a whole season out wrong and renders it without a single complaint.
+	//
+	// Every break before this one was caught structurally instead, which is
+	// why the field was decorative until now.
+	ErrUnknownVersion = errors.New("mltm: unsupported format version")
 )
 
 /*

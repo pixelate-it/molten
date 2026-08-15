@@ -12,10 +12,11 @@ import (
 	ore "github.com/pixelate-it/molten/ore"
 )
 
-func delta(ts uint64, ids ...uint32) *ore.RecordingChunk {
-	changes := make([]*ore.PixelData, len(ids))
-	for i, id := range ids {
-		changes[i] = &ore.PixelData{Id: id, Color: 0x112233}
+// One pixel per column of row 0 - nothing here cares where they are.
+func delta(ts uint64, xs ...int32) *ore.RecordingChunk {
+	changes := make([]*ore.PixelData, len(xs))
+	for i, x := range xs {
+		changes[i] = &ore.PixelData{X: x, Y: 0, Color: 0x112233}
 	}
 	return &ore.RecordingChunk{Payload: &ore.RecordingChunk_Delta{
 		Delta: &ore.Delta{Timestamp: ts, Changes: changes},
@@ -207,7 +208,7 @@ func TestReadHeaderRequiresAHeaderFirst(t *testing.T) {
 
 func TestReadHeaderReturnsTheOpeningSize(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
-		Header: &ore.Header{Version: 5, Name: "s", StartedAt: 1},
+		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
 	w, h := uint32(64), uint32(32)
 	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
@@ -237,12 +238,13 @@ func TestReadHeaderReturnsTheOpeningSize(t *testing.T) {
 
 /*
 The size lives on the opening keyframe and nowhere else, so a header followed
-by a keyframe that does not carry one is a file nothing can decode. Pixel ids
-are y*width+x; without a width there is nowhere to put a pixel.
+by a keyframe that does not carry one is a file nothing can decode: a pixel
+names a coordinate, and without a size and a corner there is no way to know
+which of them the canvas covers.
 */
 func TestReadHeaderRequiresASizedKeyframe(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
-		Header: &ore.Header{Version: 5, Name: "s", StartedAt: 1},
+		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
 	unsized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
 		Keyframe: &ore.Keyframe{Timestamp: 2},
@@ -257,11 +259,13 @@ func TestReadHeaderRequiresASizedKeyframe(t *testing.T) {
 }
 
 /*
-A record.v1 file put the size on the Header, whose width/height are now
-reserved - so the bytes that used to carry it decode into nothing and the file
-is refused. That is the intended outcome of retiring the fields, not a
-regression: there is no longer anywhere to read a size from, and guessing one
-would misplace every pixel.
+A record.v1 file is refused twice over, and the version is what catches it
+first now.
+
+It also put the size on the Header, whose width/height are reserved - so those
+bytes decode into nothing and there would be no size to read either. Both are
+the intended outcome of retiring the fields rather than a regression; the
+version check just gets there sooner and says something more useful about why.
 */
 func TestReadHeaderRefusesALegacySizeOnHeader(t *testing.T) {
 	// fields 2 and 3 on a Header are what record.v1 wrote its size into
@@ -288,8 +292,33 @@ func TestReadHeaderRefusesALegacySizeOnHeader(t *testing.T) {
 	}
 
 	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(buf.Bytes())))
-	if !errors.Is(err, ErrMissingInitialKeyframe) {
-		t.Fatalf("got %v, want ErrMissingInitialKeyframe - a v1 size is unreadable now", err)
+	if !errors.Is(err, ErrUnknownVersion) {
+		t.Fatalf("got %v, want ErrUnknownVersion - a v1 file is not readable here", err)
+	}
+}
+
+/*
+The whole reason the version stopped being decorative at v6.
+
+A v5 file is structurally identical to a v6 one - same chunks, same field
+numbers, a sized opening keyframe and all - and differs only in what the two
+numbers inside a PixelData mean. Nothing in the bytes gives that away, so
+without this check the file reads cleanly and lays every pixel out wrong.
+*/
+func TestReadHeaderRefusesAStructurallyValidOlderVersion(t *testing.T) {
+	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
+		Header: &ore.Header{Version: FormatVersion - 1, Name: "s", StartedAt: 1},
+	}}
+	w, h := uint32(64), uint32(32)
+	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
+		Keyframe: &ore.Keyframe{Timestamp: 2, Width: &w, Height: &h},
+	}}
+
+	data, _ := encoded(t, header, sized)
+
+	_, _, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	if !errors.Is(err, ErrUnknownVersion) {
+		t.Fatalf("got %v, want ErrUnknownVersion", err)
 	}
 }
 
@@ -307,9 +336,20 @@ func TestCanvasSizeNeedsBothAxes(t *testing.T) {
 	}
 }
 
-func TestKeyframeOriginDefaultsToZero(t *testing.T) {
-	x, y := KeyframeOrigin(&ore.Keyframe{})
+func TestKeyframeCornerDefaultsToTheOrigin(t *testing.T) {
+	x, y := KeyframeCorner(&ore.Keyframe{})
 	if x != 0 || y != 0 {
-		t.Fatalf("got %d,%d - an absent origin is zero", x, y)
+		t.Fatalf("got %d,%d - an absent corner is the origin", x, y)
+	}
+}
+
+// The corner is a coordinate, not a distance, so it goes negative the moment a
+// season is expanded leftwards or upwards.
+func TestKeyframeCornerReadsNegatives(t *testing.T) {
+	minX, minY := int32(-12), int32(-4)
+
+	x, y := KeyframeCorner(&ore.Keyframe{MinX: &minX, MinY: &minY})
+	if x != -12 || y != -4 {
+		t.Fatalf("got %d,%d, want -12,-4", x, y)
 	}
 }
