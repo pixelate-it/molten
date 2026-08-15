@@ -47,11 +47,15 @@ A false second return means the recording predates the offset field. The caller
 gets the recorded slice untouched, costing neither a copy nor a sort, and there
 is no better ordering to be had.
 
+The timestamp is passed in rather than read off the delta: it lives on the
+enclosing RecordingChunk now, so a caller that has the delta has necessarily
+also seen the chunk it came out of.
+
 Note this orders placements; it does not recover them. A delta carries the
 *state* of each changed pixel at flush time, so five repaints of one pixel
 inside one window are one entry with the final colour.
 */
-func PlacementOrder(d *ore.Delta) ([]*ore.PixelData, bool) {
+func PlacementOrder(chunkTimestamp uint64, d *ore.Delta) ([]*ore.PixelData, bool) {
 	hasOffsets := false
 	for _, p := range d.Changes {
 		if p.Offset != nil {
@@ -69,7 +73,8 @@ func PlacementOrder(d *ore.Delta) ([]*ore.PixelData, bool) {
 
 	// Stable, so pixels sharing an instant keep their recorded order.
 	sort.SliceStable(ordered, func(i, j int) bool {
-		return PlacedAt(d.Timestamp, ordered[i]) < PlacedAt(d.Timestamp, ordered[j])
+		return PlacedAt(chunkTimestamp, ordered[i]) <
+			PlacedAt(chunkTimestamp, ordered[j])
 	})
 
 	return ordered, true

@@ -6,8 +6,7 @@ option go_package = "github.com/pixelate-it/molten/ore";
 import "pixel.proto";
 
 message Delta {
-    uint64 timestamp = 1;
-    repeated PixelData changes = 2;
+    repeated PixelData changes = 1;
 }
 
 // The canvas' window: how big it is and which part of the plane it covers.
@@ -28,10 +27,8 @@ message Delta {
 // reader has to drop them itself - under the old scheme they were simply
 // omitted from the keyframe, which did the same job by accident.
 message Resize {
-    uint64 timestamp = 1;
-
-    uint32 width = 2;
-    uint32 height = 3;
+    uint32 width = 1;
+    uint32 height = 2;
 
     // The canvas' top-left corner, in the same signed coordinates a PixelData
     // is named by. Negative once a season has been expanded leftwards or
@@ -42,8 +39,8 @@ message Resize {
     // carried an offset into it - an offset has nowhere else to point - and
     // became load-bearing the moment a pixel started naming a place on the
     // plane.
-    sint32 min_x = 4;
-    sint32 min_y = 5;
+    sint32 min_x = 3;
+    sint32 min_y = 4;
 }
 
 // A restatement of canvas contents: these pixels are what is there, now.
@@ -57,8 +54,7 @@ message Resize {
 // add if that ever needs a recovery point. A reader should implement it
 // anyway; it costs the same five lines as a Delta.
 message Keyframe {
-    uint64 timestamp = 1;
-    repeated PixelData pixels = 2;
+    repeated PixelData pixels = 1;
 }
 
 // Seals a recording: written once, as the last chunk, when the season it
@@ -66,12 +62,10 @@ message Keyframe {
 // finished recording from one whose writer is still running or died mid-flush
 // - the framing alone cannot, since both simply end after a valid chunk.
 message Footer {
-    uint64 timestamp = 1;
-
     // Pixel changes recorded across every Delta in the file. Deliberately not
     // a chunk count, and deliberately not counting Keyframe pixels: a keyframe
     // restates pixels that were already counted when their delta was written.
-    uint64 total_pixels_placed = 2;
+    uint64 total_pixels_placed = 1;
 
     // xxHash64 (seed 0) over the canvas as of this footer, digesting every
     // non-blank pixel sorted by (y, x) as a 12-byte little-endian record:
@@ -84,7 +78,7 @@ message Footer {
     // Non-cryptographic: this catches a reader implementation (Go, C, the
     // TypeScript writer) that disagrees about what the file means, not an
     // attacker who is free to rewrite the footer along with the chunks.
-    uint64 canvas_checksum = 3;
+    uint64 canvas_checksum = 2;
 }
 
 message Header {
@@ -116,6 +110,24 @@ message Header {
 }
 
 message RecordingChunk {
+    // When this chunk was written, in epoch milliseconds.
+    //
+    // On the chunk rather than on each payload, where it used to be repeated
+    // five times over. Every chunk has one, and a field every member of a
+    // union carries belongs to the union - but the reason it moved is that a
+    // reader can now ask *when* without asking *what*. Walking a season to
+    // build an index of times against byte offsets no longer means decoding
+    // the payload at every step.
+    //
+    // Zero means unknown, which is the only honest reading of a chunk that
+    // never carried one; readers do not treat it as the epoch.
+    //
+    // `Header.started_at` is deliberately not this. That is the *season's*
+    // start; this is when the header was written, and a recording rolled
+    // mid-season - after a seal, or after a crash - has the two several days
+    // apart. Until now there was nowhere to say so.
+    uint64 timestamp = 6;
+
     // Field 2 was used once by the original prototype and reserved ever since.
     // Reusing a reserved number is normally how you produce a file that decodes
     // into the wrong message - but a reader refuses any version it does not

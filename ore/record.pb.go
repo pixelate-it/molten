@@ -23,8 +23,7 @@ const (
 
 type Delta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Changes       []*PixelData           `protobuf:"bytes,2,rep,name=changes,proto3" json:"changes,omitempty"`
+	Changes       []*PixelData           `protobuf:"bytes,1,rep,name=changes,proto3" json:"changes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -59,13 +58,6 @@ func (*Delta) Descriptor() ([]byte, []int) {
 	return file_record_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Delta) GetTimestamp() uint64 {
-	if x != nil {
-		return x.Timestamp
-	}
-	return 0
-}
-
 func (x *Delta) GetChanges() []*PixelData {
 	if x != nil {
 		return x.Changes
@@ -91,10 +83,9 @@ func (x *Delta) GetChanges() []*PixelData {
 // reader has to drop them itself - under the old scheme they were simply
 // omitted from the keyframe, which did the same job by accident.
 type Resize struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Width     uint32                 `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`
-	Height    uint32                 `protobuf:"varint,3,opt,name=height,proto3" json:"height,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Width  uint32                 `protobuf:"varint,1,opt,name=width,proto3" json:"width,omitempty"`
+	Height uint32                 `protobuf:"varint,2,opt,name=height,proto3" json:"height,omitempty"`
 	// The canvas' top-left corner, in the same signed coordinates a PixelData
 	// is named by. Negative once a season has been expanded leftwards or
 	// upwards; zero for the opening Resize of every season, since the origin
@@ -104,8 +95,8 @@ type Resize struct {
 	// carried an offset into it - an offset has nowhere else to point - and
 	// became load-bearing the moment a pixel started naming a place on the
 	// plane.
-	MinX          int32 `protobuf:"zigzag32,4,opt,name=min_x,json=minX,proto3" json:"min_x,omitempty"`
-	MinY          int32 `protobuf:"zigzag32,5,opt,name=min_y,json=minY,proto3" json:"min_y,omitempty"`
+	MinX          int32 `protobuf:"zigzag32,3,opt,name=min_x,json=minX,proto3" json:"min_x,omitempty"`
+	MinY          int32 `protobuf:"zigzag32,4,opt,name=min_y,json=minY,proto3" json:"min_y,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -138,13 +129,6 @@ func (x *Resize) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Resize.ProtoReflect.Descriptor instead.
 func (*Resize) Descriptor() ([]byte, []int) {
 	return file_record_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *Resize) GetTimestamp() uint64 {
-	if x != nil {
-		return x.Timestamp
-	}
-	return 0
 }
 
 func (x *Resize) GetWidth() uint32 {
@@ -187,8 +171,7 @@ func (x *Resize) GetMinY() int32 {
 // anyway; it costs the same five lines as a Delta.
 type Keyframe struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Pixels        []*PixelData           `protobuf:"bytes,2,rep,name=pixels,proto3" json:"pixels,omitempty"`
+	Pixels        []*PixelData           `protobuf:"bytes,1,rep,name=pixels,proto3" json:"pixels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -223,13 +206,6 @@ func (*Keyframe) Descriptor() ([]byte, []int) {
 	return file_record_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Keyframe) GetTimestamp() uint64 {
-	if x != nil {
-		return x.Timestamp
-	}
-	return 0
-}
-
 func (x *Keyframe) GetPixels() []*PixelData {
 	if x != nil {
 		return x.Pixels
@@ -242,12 +218,11 @@ func (x *Keyframe) GetPixels() []*PixelData {
 // finished recording from one whose writer is still running or died mid-flush
 // - the framing alone cannot, since both simply end after a valid chunk.
 type Footer struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
 	// Pixel changes recorded across every Delta in the file. Deliberately not
 	// a chunk count, and deliberately not counting Keyframe pixels: a keyframe
 	// restates pixels that were already counted when their delta was written.
-	TotalPixelsPlaced uint64 `protobuf:"varint,2,opt,name=total_pixels_placed,json=totalPixelsPlaced,proto3" json:"total_pixels_placed,omitempty"`
+	TotalPixelsPlaced uint64 `protobuf:"varint,1,opt,name=total_pixels_placed,json=totalPixelsPlaced,proto3" json:"total_pixels_placed,omitempty"`
 	// xxHash64 (seed 0) over the canvas as of this footer, digesting every
 	// non-blank pixel sorted by (y, x) as a 12-byte little-endian record:
 	// int32 x, int32 y, uint32 color (0x00RRGGBB).
@@ -259,7 +234,7 @@ type Footer struct {
 	// Non-cryptographic: this catches a reader implementation (Go, C, the
 	// TypeScript writer) that disagrees about what the file means, not an
 	// attacker who is free to rewrite the footer along with the chunks.
-	CanvasChecksum uint64 `protobuf:"varint,3,opt,name=canvas_checksum,json=canvasChecksum,proto3" json:"canvas_checksum,omitempty"`
+	CanvasChecksum uint64 `protobuf:"varint,2,opt,name=canvas_checksum,json=canvasChecksum,proto3" json:"canvas_checksum,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -292,13 +267,6 @@ func (x *Footer) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Footer.ProtoReflect.Descriptor instead.
 func (*Footer) Descriptor() ([]byte, []int) {
 	return file_record_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *Footer) GetTimestamp() uint64 {
-	if x != nil {
-		return x.Timestamp
-	}
-	return 0
 }
 
 func (x *Footer) GetTotalPixelsPlaced() uint64 {
@@ -411,6 +379,23 @@ func (x *Header) GetEndsAt() uint64 {
 
 type RecordingChunk struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// When this chunk was written, in epoch milliseconds.
+	//
+	// On the chunk rather than on each payload, where it used to be repeated
+	// five times over. Every chunk has one, and a field every member of a
+	// union carries belongs to the union - but the reason it moved is that a
+	// reader can now ask *when* without asking *what*. Walking a season to
+	// build an index of times against byte offsets no longer means decoding
+	// the payload at every step.
+	//
+	// Zero means unknown, which is the only honest reading of a chunk that
+	// never carried one; readers do not treat it as the epoch.
+	//
+	// `Header.started_at` is deliberately not this. That is the *season's*
+	// start; this is when the header was written, and a recording rolled
+	// mid-season - after a seal, or after a crash - has the two several days
+	// apart. Until now there was nowhere to say so.
+	Timestamp uint64 `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	// Field 2 was used once by the original prototype and reserved ever since.
 	// Reusing a reserved number is normally how you produce a file that decodes
 	// into the wrong message - but a reader refuses any version it does not
@@ -457,6 +442,13 @@ func (x *RecordingChunk) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RecordingChunk.ProtoReflect.Descriptor instead.
 func (*RecordingChunk) Descriptor() ([]byte, []int) {
 	return file_record_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *RecordingChunk) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
 }
 
 func (x *RecordingChunk) GetPayload() isRecordingChunk_Payload {
@@ -550,23 +542,19 @@ var File_record_proto protoreflect.FileDescriptor
 const file_record_proto_rawDesc = "" +
 	"\n" +
 	"\frecord.proto\x12\n" +
-	"molten.ore\x1a\vpixel.proto\"V\n" +
-	"\x05Delta\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12/\n" +
-	"\achanges\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"~\n" +
-	"\x06Resize\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12\x14\n" +
-	"\x05width\x18\x02 \x01(\rR\x05width\x12\x16\n" +
-	"\x06height\x18\x03 \x01(\rR\x06height\x12\x13\n" +
-	"\x05min_x\x18\x04 \x01(\x11R\x04minX\x12\x13\n" +
-	"\x05min_y\x18\x05 \x01(\x11R\x04minY\"W\n" +
-	"\bKeyframe\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12-\n" +
-	"\x06pixels\x18\x02 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\"\x7f\n" +
-	"\x06Footer\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12.\n" +
-	"\x13total_pixels_placed\x18\x02 \x01(\x04R\x11totalPixelsPlaced\x12'\n" +
-	"\x0fcanvas_checksum\x18\x03 \x01(\x04R\x0ecanvasChecksum\"\xf2\x01\n" +
+	"molten.ore\x1a\vpixel.proto\"8\n" +
+	"\x05Delta\x12/\n" +
+	"\achanges\x18\x01 \x03(\v2\x15.molten.ore.PixelDataR\achanges\"`\n" +
+	"\x06Resize\x12\x14\n" +
+	"\x05width\x18\x01 \x01(\rR\x05width\x12\x16\n" +
+	"\x06height\x18\x02 \x01(\rR\x06height\x12\x13\n" +
+	"\x05min_x\x18\x03 \x01(\x11R\x04minX\x12\x13\n" +
+	"\x05min_y\x18\x04 \x01(\x11R\x04minY\"9\n" +
+	"\bKeyframe\x12-\n" +
+	"\x06pixels\x18\x01 \x03(\v2\x15.molten.ore.PixelDataR\x06pixels\"a\n" +
+	"\x06Footer\x12.\n" +
+	"\x13total_pixels_placed\x18\x01 \x01(\x04R\x11totalPixelsPlaced\x12'\n" +
+	"\x0fcanvas_checksum\x18\x02 \x01(\x04R\x0ecanvasChecksum\"\xf2\x01\n" +
 	"\x06Header\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1d\n" +
@@ -579,8 +567,9 @@ const file_record_proto_rawDesc = "" +
 	"\b_game_idB\v\n" +
 	"\t_cooldownB\n" +
 	"\n" +
-	"\b_ends_atJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x05widthR\x06height\"\x84\x02\n" +
-	"\x0eRecordingChunk\x12,\n" +
+	"\b_ends_atJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x05widthR\x06height\"\xa2\x02\n" +
+	"\x0eRecordingChunk\x12\x1c\n" +
+	"\ttimestamp\x18\x06 \x01(\x04R\ttimestamp\x12,\n" +
 	"\x06header\x18\x01 \x01(\v2\x12.molten.ore.HeaderH\x00R\x06header\x12,\n" +
 	"\x06resize\x18\x02 \x01(\v2\x12.molten.ore.ResizeH\x00R\x06resize\x122\n" +
 	"\bkeyframe\x18\x03 \x01(\v2\x14.molten.ore.KeyframeH\x00R\bkeyframe\x12)\n" +

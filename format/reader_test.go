@@ -18,9 +18,10 @@ func delta(ts uint64, xs ...int32) *ore.RecordingChunk {
 	for i, x := range xs {
 		changes[i] = &ore.PixelData{X: x, Y: 0, Color: 0x112233}
 	}
-	return &ore.RecordingChunk{Payload: &ore.RecordingChunk_Delta{
-		Delta: &ore.Delta{Timestamp: ts, Changes: changes},
-	}}
+	return &ore.RecordingChunk{
+		Timestamp: ts,
+		Payload:   &ore.RecordingChunk_Delta{Delta: &ore.Delta{Changes: changes}},
+	}
 }
 
 // encoded returns the wire bytes of the given chunks, plus the offset each one
@@ -52,7 +53,7 @@ func TestChunkReaderRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ts %d: %v", want, err)
 		}
-		if got := chunk.GetDelta().Timestamp; got != want {
+		if got := chunk.Timestamp; got != want {
 			t.Fatalf("got ts %d, want %d", got, want)
 		}
 	}
@@ -121,7 +122,7 @@ func TestTailReaderResumesAcrossAPartialChunk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first chunk: %v", err)
 	}
-	if got := chunk.GetDelta().Timestamp; got != 1000 {
+	if got := chunk.Timestamp; got != 1000 {
 		t.Fatalf("got ts %d, want 1000", got)
 	}
 
@@ -149,7 +150,7 @@ func TestTailReaderResumesAcrossAPartialChunk(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ts %d after the write landed: %v", want, err)
 		}
-		if got := chunk.GetDelta().Timestamp; got != want {
+		if got := chunk.Timestamp; got != want {
 			t.Fatalf("got ts %d, want %d", got, want)
 		}
 	}
@@ -192,7 +193,7 @@ func TestTailReaderResumesAcrossAPartialLengthPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("after the write landed: %v", err)
 	}
-	if got := chunk.GetDelta().Timestamp; got != 2000 {
+	if got := chunk.Timestamp; got != 2000 {
 		t.Fatalf("got ts %d, want 2000", got)
 	}
 }
@@ -200,7 +201,7 @@ func TestTailReaderResumesAcrossAPartialLengthPrefix(t *testing.T) {
 func TestReadHeaderRequiresAHeaderFirst(t *testing.T) {
 	data, _ := encoded(t, delta(1000, 1))
 
-	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrNotHeader) {
 		t.Fatalf("got %v, want ErrNotHeader", err)
 	}
@@ -210,25 +211,28 @@ func TestReadHeaderReturnsTheOpeningWindow(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
-	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
-		Resize: &ore.Resize{Timestamp: 2, Width: 64, Height: 32, MinX: -8, MinY: -4},
-	}}
+	sized := &ore.RecordingChunk{
+		Timestamp: 2,
+		Payload: &ore.RecordingChunk_Resize{
+			Resize: &ore.Resize{Width: 64, Height: 32, MinX: -8, MinY: -4},
+		},
+	}
 
 	data, _ := encoded(t, header, sized, delta(3000, 1))
 
 	cr := NewChunkReader(bytes.NewReader(data))
-	gotHeader, opening, err := ReadHeader(cr)
+	gotHeader, window, openedAt, err := ReadHeader(cr)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	window := ReadWindow(opening)
 	if window != (Window{Width: 64, Height: 32, MinX: -8, MinY: -4}) {
 		t.Fatalf("got %+v, want 64x32 at -8,-4", window)
 	}
-	// The Resize comes back whole because its timestamp starts the clock.
-	if gotHeader.Name != "s" || opening.Timestamp != 2 {
-		t.Fatal("header and opening resize must come back too")
+	/* The opening chunk's own timestamp, which is where the season's clock
+	 * starts - and which lives on the chunk now, not on the Resize. */
+	if gotHeader.Name != "s" || openedAt != 2 {
+		t.Fatal("header and the moment it opened must come back too")
 	}
 
 	// left positioned on the third chunk, so the caller carries straight on
@@ -250,13 +254,14 @@ func TestReadHeaderRequiresAnOpeningResize(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
-	contents := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Keyframe{
-		Keyframe: &ore.Keyframe{Timestamp: 2},
-	}}
+	contents := &ore.RecordingChunk{
+		Timestamp: 2,
+		Payload:   &ore.RecordingChunk_Keyframe{Keyframe: &ore.Keyframe{}},
+	}
 
 	data, _ := encoded(t, header, contents)
 
-	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrMissingInitialResize) {
 		t.Fatalf("got %v, want ErrMissingInitialResize", err)
 	}
@@ -267,13 +272,14 @@ func TestReadHeaderRequiresTheOpeningResizeToHaveArea(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion, Name: "s", StartedAt: 1},
 	}}
-	empty := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
-		Resize: &ore.Resize{Timestamp: 2, Width: 8},
-	}}
+	empty := &ore.RecordingChunk{
+		Timestamp: 2,
+		Payload:   &ore.RecordingChunk_Resize{Resize: &ore.Resize{Width: 8}},
+	}
 
 	data, _ := encoded(t, header, empty)
 
-	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrMissingInitialResize) {
 		t.Fatalf("got %v, want ErrMissingInitialResize", err)
 	}
@@ -306,13 +312,16 @@ func TestReadHeaderRefusesALegacySizeOnHeader(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Write(&ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
-		Resize: &ore.Resize{Timestamp: 2, Width: 8, Height: 8},
-	}}); err != nil {
+	if err := w.Write(&ore.RecordingChunk{
+		Timestamp: 2,
+		Payload: &ore.RecordingChunk_Resize{
+			Resize: &ore.Resize{Width: 8, Height: 8},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(buf.Bytes())))
+	_, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(buf.Bytes())))
 	if !errors.Is(err, ErrUnknownVersion) {
 		t.Fatalf("got %v, want ErrUnknownVersion - a v1 file is not readable here", err)
 	}
@@ -331,13 +340,16 @@ func TestReadHeaderRefusesAStructurallyValidOlderVersion(t *testing.T) {
 	header := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Header{
 		Header: &ore.Header{Version: FormatVersion - 1, Name: "s", StartedAt: 1},
 	}}
-	sized := &ore.RecordingChunk{Payload: &ore.RecordingChunk_Resize{
-		Resize: &ore.Resize{Timestamp: 2, Width: 64, Height: 32, MinX: -8, MinY: -4},
-	}}
+	sized := &ore.RecordingChunk{
+		Timestamp: 2,
+		Payload: &ore.RecordingChunk_Resize{
+			Resize: &ore.Resize{Width: 64, Height: 32, MinX: -8, MinY: -4},
+		},
+	}
 
 	data, _ := encoded(t, header, sized)
 
-	_, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
+	_, _, _, err := ReadHeader(NewChunkReader(bytes.NewReader(data)))
 	if !errors.Is(err, ErrUnknownVersion) {
 		t.Fatalf("got %v, want ErrUnknownVersion", err)
 	}

@@ -35,19 +35,17 @@ func runInfo(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	header, first, err := format.ReadHeader(reader)
+	header, opening, openedAt, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
-
-	opening := format.ReadWindow(first)
 
 	type resizeEvent struct {
 		ts     uint64
 		window format.Window
 	}
 
-	resizes := []resizeEvent{{ts: first.Timestamp, window: opening}}
+	resizes := []resizeEvent{{ts: openedAt, window: opening}}
 
 	digest := canvas.NewDigest()
 	digest.Reframe(opening)
@@ -59,6 +57,7 @@ func runInfo(args []string) error {
 	var lastTs uint64
 
 	var footer *ore.Footer
+	var sealedAt uint64
 	// Chunks after the one that claimed to be last. A sealed recording has
 	// none, and anything here means something wrote past the seal.
 	var afterFooter int
@@ -87,33 +86,33 @@ func runInfo(args []string) error {
 		switch {
 		case chunk.GetResize() != nil:
 			resize := chunk.GetResize()
-			lastTs = resize.Timestamp
+			lastTs = chunk.Timestamp
 
 			resizes = append(resizes, resizeEvent{
-				ts:     resize.Timestamp,
+				ts:     chunk.Timestamp,
 				window: format.ReadWindow(resize),
 			})
 
 			digest.ApplyResize(resize)
 
 		case chunk.GetKeyframe() != nil:
-			kf := chunk.GetKeyframe()
 			keyframes++
-			lastTs = kf.Timestamp
+			lastTs = chunk.Timestamp
 
-			digest.ApplyKeyframe(kf)
+			digest.ApplyKeyframe(chunk.GetKeyframe())
 
 		case chunk.GetDelta() != nil:
 			delta := chunk.GetDelta()
 			deltas++
-			lastTs = delta.Timestamp
+			lastTs = chunk.Timestamp
 			placed += uint64(len(delta.Changes))
 
 			digest.ApplyDelta(delta)
 
 		case chunk.GetFooter() != nil:
 			footer = chunk.GetFooter()
-			lastTs = footer.Timestamp
+			lastTs = chunk.Timestamp
+			sealedAt = chunk.Timestamp
 		}
 	}
 
@@ -157,7 +156,7 @@ func runInfo(args []string) error {
 		}
 	}
 
-	printSeal(footer, digest, placed, afterFooter)
+	printSeal(footer, sealedAt, digest, placed, afterFooter)
 
 	return nil
 }
@@ -173,13 +172,19 @@ here means Go and the TypeScript writer disagree about what the file means,
 which is worth finding out from a one-second command rather than from a
 rendered video months later.
 */
-func printSeal(footer *ore.Footer, digest *canvas.Digest, placed uint64, afterFooter int) {
+func printSeal(
+	footer *ore.Footer,
+	sealedAt uint64,
+	digest *canvas.Digest,
+	placed uint64,
+	afterFooter int,
+) {
 	if footer == nil {
 		fmt.Printf("Sealed:        no (still being written, or the writer was interrupted)\n")
 		return
 	}
 
-	fmt.Printf("Sealed:        yes @ ts=%d\n", footer.Timestamp)
+	fmt.Printf("Sealed:        yes @ ts=%d\n", sealedAt)
 
 	fmt.Printf("  pixels:      %d recorded", footer.TotalPixelsPlaced)
 	if footer.TotalPixelsPlaced == placed {

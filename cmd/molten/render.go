@@ -68,12 +68,11 @@ func runRender(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	_, first, err := format.ReadHeader(reader)
+	_, opening, openedAt, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
 
-	opening := format.ReadWindow(first)
 	log.Printf("initial canvas size: %dx%d", opening.Width, opening.Height)
 
 	// The opening Resize is what sizes the canvas. It carries no pixels; a
@@ -84,7 +83,6 @@ func runRender(args []string) error {
 	/* The opening Resize's own timestamp is where the season's clock starts.
 	 * It used to be the opening keyframe's, which was the same instant by a
 	 * different name. */
-	openedAt := first.Timestamp
 
 	mgr := segment.NewManager(*outputPath, *fps).
 		WithEncodeOptions(*scale, extraArgs)
@@ -203,20 +201,21 @@ func renderTimeMode(
 			if err := emit(); err != nil {
 				return err
 			}
-			if err := advance(resize.Timestamp); err != nil {
+			if err := advance(chunk.Timestamp); err != nil {
 				return err
 			}
 
 		case chunk.GetKeyframe() != nil:
-			kf := chunk.GetKeyframe()
-			state.ApplyKeyframe(kf)
+			state.ApplyKeyframe(chunk.GetKeyframe())
 
-			if err := advance(kf.Timestamp); err != nil {
+			if err := advance(chunk.Timestamp); err != nil {
 				return err
 			}
 
 		case chunk.GetDelta() != nil:
-			if err := applyDeltaOverTime(state, chunk.GetDelta(), advance); err != nil {
+			if err := applyDeltaOverTime(
+				state, chunk.Timestamp, chunk.GetDelta(), advance,
+			); err != nil {
 				return err
 			}
 		}
@@ -233,26 +232,31 @@ func renderTimeMode(
 //
 // Recordings written before the offset field carry none, and take the original
 // path exactly - no behaviour change for anything already on disk.
-func applyDeltaOverTime(state *canvas.State, d *ore.Delta, advance func(uint64) error) error {
-	ordered, timed := format.PlacementOrder(d)
+func applyDeltaOverTime(
+	state *canvas.State,
+	at uint64,
+	d *ore.Delta,
+	advance func(uint64) error,
+) error {
+	ordered, timed := format.PlacementOrder(at, d)
 
 	// Nothing to interleave by: keep the original atomic behaviour exactly.
 	if !timed {
 		state.ApplyDelta(d)
-		return advance(d.Timestamp)
+		return advance(at)
 	}
 
 	for _, p := range ordered {
 		// Frames covering the time before this pixel show the canvas without
 		// it, so it appears in the frame after the moment it was painted.
-		if err := advance(format.PlacedAt(d.Timestamp, p)); err != nil {
+		if err := advance(format.PlacedAt(at, p)); err != nil {
 			return err
 		}
 		state.ApplySinglePixel(p)
 	}
 
 	// Then the remainder of the window, up to the flush itself.
-	return advance(d.Timestamp)
+	return advance(at)
 }
 
 func renderActivityMode(
@@ -317,7 +321,9 @@ func renderActivityMode(
 			 * placement order - a pixel enters the change set the first time
 			 * it is painted and keeps that position however often it is
 			 * repainted. Offsets give the real order. */
-			ordered, _ := format.PlacementOrder(chunk.GetDelta())
+			ordered, _ := format.PlacementOrder(
+				chunk.Timestamp, chunk.GetDelta(),
+			)
 			for _, p := range ordered {
 				if err := applyAndMaybeEmit(p); err != nil {
 					return err

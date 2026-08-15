@@ -37,15 +37,17 @@ FormatVersion is the recording format this build reads.
 Bumped whenever the meaning of the bytes changes, and checked - see
 ErrUnknownVersion for why that stopped being optional at v6.
 */
-const FormatVersion = 7
+const FormatVersion = 8
 
 /*
 ReadHeader consumes the two chunks every recording opens with and checks that
 it is one: a Header this build knows the version of, then a Resize declaring
 the canvas' opening window.
 
-The Resize comes back whole rather than as a [Window], because its timestamp is
-where the season's clock starts. Call [ReadWindow] on it for the geometry.
+`openedAt` is the opening Resize chunk's own timestamp, which is where the
+season's clock starts. It comes back separately because a timestamp lives on
+the enclosing chunk now rather than on the payload - see RecordingChunk in
+ore/record.proto.
 
 cr is left positioned on the third chunk, so a caller carries straight on with
 Next.
@@ -54,14 +56,16 @@ A record.v1 file put the size on the Header, whose width/height are retired -
 but the version check catches it first and says something more useful about
 why. Convert such a file before reading it.
 */
-func ReadHeader(cr *ChunkReader) (header *ore.Header, opening *ore.Resize, err error) {
+func ReadHeader(
+	cr *ChunkReader,
+) (header *ore.Header, window Window, openedAt uint64, err error) {
 	first, err := cr.Next()
 	if err != nil {
-		return nil, nil, err
+		return nil, Window{}, 0, err
 	}
 	header = first.GetHeader()
 	if header == nil {
-		return nil, nil, ErrNotHeader
+		return nil, Window{}, 0, ErrNotHeader
 	}
 
 	/* Refused rather than attempted. A version this build does not know is a
@@ -69,7 +73,7 @@ func ReadHeader(cr *ChunkReader) (header *ore.Header, opening *ore.Resize, err e
 	 * mode of guessing is a season rendered wrong rather than a season that
 	 * fails to render - the kind nobody notices until they watch the video. */
 	if header.GetVersion() != FormatVersion {
-		return nil, nil, fmt.Errorf(
+		return nil, Window{}, 0, fmt.Errorf(
 			"%w: file is v%d, this build reads v%d",
 			ErrUnknownVersion, header.GetVersion(), FormatVersion,
 		)
@@ -77,19 +81,21 @@ func ReadHeader(cr *ChunkReader) (header *ore.Header, opening *ore.Resize, err e
 
 	second, err := cr.Next()
 	if err != nil {
-		return nil, nil, err
+		return nil, Window{}, 0, err
 	}
 
-	opening = second.GetResize()
+	opening := second.GetResize()
 	if opening == nil {
-		return nil, nil, ErrMissingInitialResize
+		return nil, Window{}, 0, ErrMissingInitialResize
 	}
+
+	window = ReadWindow(opening)
 
 	// A canvas of no area is not a canvas, and sharp/libx264 both refuse it
 	// far from here.
-	if opening.GetWidth() == 0 || opening.GetHeight() == 0 {
-		return nil, nil, ErrMissingInitialResize
+	if window.Width == 0 || window.Height == 0 {
+		return nil, Window{}, 0, ErrMissingInitialResize
 	}
 
-	return header, opening, nil
+	return header, window, second.Timestamp, nil
 }

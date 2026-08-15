@@ -19,7 +19,6 @@ func u32(v uint32) *uint32 { return &v }
 // first time it is touched in the window.
 func TestPlacementOrderSortsByOffset(t *testing.T) {
 	d := &ore.Delta{
-		Timestamp: 10_000,
 		// Recorded order 1, 2, 3; painted order 3, 1, 2.
 		Changes: []*ore.PixelData{
 			px(1, u32(500)), // placed at 9500
@@ -28,7 +27,7 @@ func TestPlacementOrderSortsByOffset(t *testing.T) {
 		},
 	}
 
-	ordered, timed := PlacementOrder(d)
+	ordered, timed := PlacementOrder(10_000, d)
 
 	if !timed {
 		t.Fatal("expected offsets to be detected")
@@ -45,11 +44,10 @@ func TestPlacementOrderSortsByOffset(t *testing.T) {
 // Recordings written before the field must behave exactly as they did.
 func TestPlacementOrderWithoutOffsetsIsUntouched(t *testing.T) {
 	d := &ore.Delta{
-		Timestamp: 10_000,
-		Changes:   []*ore.PixelData{px(1, nil), px(2, nil), px(3, nil)},
+		Changes: []*ore.PixelData{px(1, nil), px(2, nil), px(3, nil)},
 	}
 
-	ordered, timed := PlacementOrder(d)
+	ordered, timed := PlacementOrder(10_000, d)
 
 	if timed {
 		t.Fatal("no pixel carries an offset, so nothing can be ordered by it")
@@ -61,17 +59,13 @@ func TestPlacementOrderWithoutOffsetsIsUntouched(t *testing.T) {
 
 // An offset larger than the timestamp would underflow uint64 subtraction.
 func TestPlacedAtClampsImplausibleOffset(t *testing.T) {
-	d := &ore.Delta{Timestamp: 100}
-
-	if got := PlacedAt(d.Timestamp, px(1, u32(500))); got != 0 {
+	if got := PlacedAt(100, px(1, u32(500))); got != 0 {
 		t.Errorf("got %d, want 0 - an offset past the epoch must clamp", got)
 	}
 }
 
 func TestPlacedAtFallsBackToChunkTimestamp(t *testing.T) {
-	d := &ore.Delta{Timestamp: 10_000}
-
-	if got := PlacedAt(d.Timestamp, px(1, nil)); got != 10_000 {
+	if got := PlacedAt(10_000, px(1, nil)); got != 10_000 {
 		t.Errorf("got %d, want the delta's own timestamp", got)
 	}
 }
