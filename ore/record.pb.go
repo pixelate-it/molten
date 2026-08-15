@@ -166,8 +166,8 @@ func (x *Resize) GetMinY() int32 {
 type Footer struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Pixel changes recorded across every Delta in the file. Deliberately not
-	// a chunk count, and deliberately not counting Keyframe pixels: a keyframe
-	// restates pixels that were already counted when their delta was written.
+	// a chunk count: it counts placements, and a recording is nothing but the
+	// Deltas that carry them.
 	TotalPixelsPlaced uint64 `protobuf:"varint,1,opt,name=total_pixels_placed,json=totalPixelsPlaced,proto3" json:"total_pixels_placed,omitempty"`
 	// xxHash64 (seed 0) over the canvas as of this footer, digesting every
 	// non-blank pixel sorted by (y, x) as a 12-byte little-endian record:
@@ -342,6 +342,13 @@ type RecordingChunk struct {
 	// here is the version gate, not a gap in the numbering - the same reason
 	// field 2 could be reused after the original prototype left it reserved.
 	//
+	// The payload keeps 5 through 9 to grow into, which is why `timestamp`
+	// sits at 10 rather than next to them. That is not a guess about what
+	// arrives - guessing the *shape* of a future message is what every break
+	// in this format's history has cost us - it is only a choice of numbers,
+	// and it is free: a tag is a varint over `(field << 3) | wire_type`, so
+	// everything up to 15 costs one byte and 10 costs exactly what 5 did.
+	//
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*RecordingChunk_Header
@@ -365,7 +372,7 @@ type RecordingChunk struct {
 	// start; this is when the header was written, and a recording rolled
 	// mid-season - after a seal, or after a crash - has the two several days
 	// apart. Until now there was nowhere to say so.
-	Timestamp     uint64 `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Timestamp     uint64 `protobuf:"varint,10,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -512,7 +519,8 @@ const file_record_proto_rawDesc = "" +
 	"\x06resize\x18\x02 \x01(\v2\x12.molten.ore.ResizeH\x00R\x06resize\x12)\n" +
 	"\x05delta\x18\x03 \x01(\v2\x11.molten.ore.DeltaH\x00R\x05delta\x12,\n" +
 	"\x06footer\x18\x04 \x01(\v2\x12.molten.ore.FooterH\x00R\x06footer\x12\x1c\n" +
-	"\ttimestamp\x18\x05 \x01(\x04R\ttimestampB\t\n" +
+	"\ttimestamp\x18\n" +
+	" \x01(\x04R\ttimestampB\t\n" +
 	"\apayloadB#Z!github.com/pixelate-it/molten/oreb\x06proto3"
 
 var (

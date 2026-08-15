@@ -112,6 +112,13 @@ message RecordingChunk {
     // Numbers close up rather than reserving the hole. What protects a reader
     // here is the version gate, not a gap in the numbering - the same reason
     // field 2 could be reused after the original prototype left it reserved.
+    //
+    // The payload keeps 5 through 9 to grow into, which is why `timestamp`
+    // sits at 10 rather than next to them. That is not a guess about what
+    // arrives - guessing the *shape* of a future message is what every break
+    // in this format's history has cost us - it is only a choice of numbers,
+    // and it is free: a tag is a varint over `(field << 3) | wire_type`, so
+    // everything up to 15 costs one byte and 10 costs exactly what 5 did.
     oneof payload {
         Header header = 1;
         Resize resize = 2;
@@ -135,5 +142,5 @@ message RecordingChunk {
     // start; this is when the header was written, and a recording rolled
     // mid-season - after a seal, or after a crash - has the two several days
     // apart. Until now there was nowhere to say so.
-    uint64 timestamp = 5;
+    uint64 timestamp = 10;
 }
