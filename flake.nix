@@ -1,5 +1,5 @@
 {
-    description = "Development environment for Pixel Battle Molten";
+    description = "Flake for Pixel Battle Molten";
 
     inputs = {
         nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
@@ -16,7 +16,7 @@
             {
                 packages.default = pkgs.buildGoModule {
                     pname = "molten";
-                    version = "v0.1.1";
+                    version = "v0.2.0";
 
                     src = ./.;
 
