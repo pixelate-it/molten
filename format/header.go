@@ -1,102 +1,101 @@
 package format
 
-import ore "github.com/pixelate-it/molten/ore"
+import (
+	"fmt"
+
+	ore "github.com/pixelate-it/molten/ore"
+)
 
 /*
-CanvasSize reads the canvas size off a keyframe.
+Window is the canvas' size and position: how big it is, and which part of the
+plane it covers.
 
-The size lives on a Keyframe and nowhere else, because it can change
-mid-recording and a Keyframe is the only chunk that can say so. record.v1 put
-it on the Header instead; that field is retired and those files no longer read
-(see the reserved fields in ore/record.proto).
-
-ok is false when the keyframe does not carry one - which for a recording's
-opening keyframe is a file nothing can decode, since pixel ids are y*width+x
-and without a width there is nowhere to put a pixel.
+A size alone never located a canvas. That was invisible while a pixel was
+addressed by an offset *into* the canvas - an offset has nowhere else to point
+- and became load-bearing the moment a pixel started naming a place on a plane
+that outlives any one canvas size.
 */
-func CanvasSize(kf *ore.Keyframe) (width, height uint32, ok bool) {
-	if kf.Width == nil || kf.Height == nil {
-		return 0, 0, false
+type Window struct {
+	Width, Height uint32
+	MinX, MinY    int32
+}
+
+// ReadWindow reads a Resize chunk into a Window. Absent fields are zero, which
+// is the right reading for a season that starts on the origin.
+func ReadWindow(r *ore.Resize) Window {
+	return Window{
+		Width:  r.GetWidth(),
+		Height: r.GetHeight(),
+		MinX:   r.GetMinX(),
+		MinY:   r.GetMinY(),
 	}
-	return *kf.Width, *kf.Height, true
 }
 
 /*
-ReadHeader consumes the two chunks every recording opens with and checks that
-it is one: a Header, then a Keyframe carrying the canvas size.
+FormatVersion is the recording format this build reads.
 
-width and height come back because reading them is the only reason the second
-chunk is mandatory; the keyframe itself comes back too because it is not just a
-size announcement - it carries the opening state of the canvas, and its pixels
-still have to be applied.
+Bumped whenever the meaning of the bytes changes, and checked - see
+ErrUnknownVersion for why that stopped being optional at v6.
+*/
+const FormatVersion = 11
+
+/*
+ReadHeader consumes the two chunks every recording opens with and checks that
+it is one: a Header this build knows the version of, then a Resize declaring
+the canvas' opening window.
+
+`openedAt` is the opening Resize chunk's own timestamp, which is where the
+season's clock starts. It comes back separately because a timestamp lives on
+the enclosing chunk now rather than on the payload - see RecordingChunk in
+ore/record.proto.
 
 cr is left positioned on the third chunk, so a caller carries straight on with
 Next.
 
-A record.v1 file fails here with ErrMissingInitialKeyframe, and that is the
-intended outcome rather than an accident: it put the size on the Header, that
-field is retired, and there is nothing left to read a size from. Convert such a
-file before reading it.
+A record.v1 file put the size on the Header, whose width/height are retired -
+but the version check catches it first and says something more useful about
+why. Convert such a file before reading it.
 */
-func ReadHeader(cr *ChunkReader) (header *ore.Header, kf *ore.Keyframe, width, height uint32, err error) {
+func ReadHeader(
+	cr *ChunkReader,
+) (header *ore.Header, window Window, openedAt uint64, err error) {
 	first, err := cr.Next()
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, Window{}, 0, err
 	}
 	header = first.GetHeader()
 	if header == nil {
-		return nil, nil, 0, 0, ErrNotHeader
+		return nil, Window{}, 0, ErrNotHeader
+	}
+
+	/* Refused rather than attempted. A version this build does not know is a
+	 * file whose bytes mean something it has no way to guess, and the failure
+	 * mode of guessing is a season rendered wrong rather than a season that
+	 * fails to render - the kind nobody notices until they watch the video. */
+	if header.GetVersion() != FormatVersion {
+		return nil, Window{}, 0, fmt.Errorf(
+			"%w: file is v%d, this build reads v%d",
+			ErrUnknownVersion, header.GetVersion(), FormatVersion,
+		)
 	}
 
 	second, err := cr.Next()
 	if err != nil {
-		return nil, nil, 0, 0, err
-	}
-	kf = second.GetKeyframe()
-	if kf == nil {
-		return nil, nil, 0, 0, ErrMissingInitialKeyframe
+		return nil, Window{}, 0, err
 	}
 
-	width, height, ok := CanvasSize(kf)
-	if !ok {
-		return nil, nil, 0, 0, ErrMissingInitialKeyframe
+	opening := second.GetResize()
+	if opening == nil {
+		return nil, Window{}, 0, ErrMissingInitialResize
 	}
 
-	return header, kf, width, height, nil
-}
+	window = ReadWindow(opening)
 
-/*
-KeyframeOrigin reads the accumulated anchor offset off a keyframe.
-
-Absent means zero, which is right for an opening keyframe and is the only
-answer available for a recording written before the field existed - such a
-recording either never resized, or resized in a way nothing can now reconstruct
-(the anchor itself is never recorded, only its result).
-
-The origin converts between the buffer's addressing and the season's original
-one, and it is why a permalink or a cross-implementation checksum survives an
-expansion:
-
-	canonical = local - origin
-	local     = canonical + origin
-
-The origin is never negative. A canonical coordinate absolutely can be -
-anything painted into space an expansion added on the left or the top.
-*/
-func KeyframeOrigin(kf *ore.Keyframe) (x, y uint32) {
-	if kf.OriginX != nil {
-		x = *kf.OriginX
+	// A canvas of no area is not a canvas, and sharp/libx264 both refuse it
+	// far from here.
+	if window.Width == 0 || window.Height == 0 {
+		return nil, Window{}, 0, ErrMissingInitialResize
 	}
-	if kf.OriginY != nil {
-		y = *kf.OriginY
-	}
-	return x, y
-}
 
-// IsResize reports whether a keyframe carries a canvas size, which is the
-// format's only resize signal. A reader that sees one must blank its canvas at
-// the new size before applying the keyframe's pixels, because a resize keyframe
-// restates everything that survives.
-func IsResize(kf *ore.Keyframe) bool {
-	return kf.Width != nil && kf.Height != nil
+	return header, window, second.Timestamp, nil
 }

@@ -3,59 +3,44 @@ syntax = "proto3";
 package molten.ore;
 option go_package = "github.com/pixelate-it/molten/ore";
 
-import "pixel_data.proto";
+import "pixel.proto";
 
 message Delta {
-    uint64 timestamp = 1;
-    repeated PixelData changes = 2;
+    repeated PixelData changes = 1;
 }
 
-message Keyframe {
-    uint64 timestamp = 1;
-    repeated PixelData pixels = 2;
+// The canvas' window: how big it is and which part of the plane it covers.
+//
+// Written as the second chunk of every recording, to open it, and again on
+// every change of size or position. A reader that sees one keeps everything it
+// holds and moves it into the new window - a coordinate means the same pixel
+// on both sides, so there is nothing to re-address and nothing to restate.
+//
+// It carries no pixels, and that is the whole point of it being its own chunk.
+// Until v7 a resize was a Keyframe carrying the entire painted canvas, because
+// a pixel was addressed by an offset into the canvas and every offset changed
+// when the canvas did - so the reader had to be handed the whole thing again.
+// On a real season that cost 91% of the file: 5.05 MB of restatement against
+// 0.47 MB of actual history.
+//
+// Both directions. A cut destroys the pixels outside the new window, and every
+// reader has to drop them itself - under the old scheme they were simply
+// omitted from the keyframe, which did the same job by accident.
+message Resize {
+    uint32 width = 1;
+    uint32 height = 2;
 
-    // Present together or not at all, and their presence is the format's only
-    // resize signal: a reader that sees them blanks its canvas at the new size
-    // before applying `pixels`, so a keyframe carrying them MUST carry
-    // everything that survives the resize.
+    // The canvas' top-left corner, in the same signed coordinates a PixelData
+    // is named by. Negative once a season has been expanded leftwards or
+    // upwards; zero for the opening Resize of every season, since the origin
+    // is defined as the corner the canvas starts on.
     //
-    // The recording's opening keyframe - the second chunk, always - is
-    // required to carry them. It is what establishes the canvas size, since
-    // the Header no longer can (see the reserved fields there).
-    //
-    // Absent on any other keyframe, which is then a plain restatement of
-    // canvas contents at the current size. Note the writer emits no periodic
-    // keyframes: repeated full-canvas snapshots dominated the file size for
-    // something no reader consumed.
-    optional uint32 width = 3;
-    optional uint32 height = 4;
-
-    // Cumulative offset of this chunk's local (0, 0) from the recording's
-    // canonical (0, 0):
-    //
-    //     canonical = local - origin
-    //     local     = canonical + origin
-    //
-    // A resize grows the canvas around the existing artwork, so without this
-    // every coordinate in the file shifts whenever the anchor is anything but
-    // top-left, and a "pixel (12, 40)" recorded on day one names a different
-    // piece of art on day three. Canonical coordinates are the ones that
-    // survive: they are fixed to the content, and are what a permalink, a
-    // client-side stencil, or a cross-implementation checksum should use.
-    //
-    // 0 on the opening (sizing) keyframe, which is what defines the canonical
-    // space. Always >= 0 afterwards - resizes are strictly grow-only and an
-    // anchor only ever adds space around the old content (see anchorOffset),
-    // so the origin can only move away from local (0, 0), never behind it.
-    //
-    // Note that a *canonical* coordinate may well be negative: anything
-    // painted into space added on the left or the top has local < origin.
-    //
-    // Unset means 0 - which is what every recording written before this field
-    // claims, correctly for the ones that never resized and by necessity for
-    // the ones that did, since nothing on disk recorded the anchor.
-    optional uint32 origin_x = 5;
-    optional uint32 origin_y = 6;
+    // A size alone never located a canvas. That was invisible while a pixel
+    // carried an offset into it - an offset has nowhere else to point - and
+    // became load-bearing the moment a pixel started naming a place on the
+    // plane.
+    sint32 min_x = 3;
+    sint32 min_y = 4;
 }
 
 // Seals a recording: written once, as the last chunk, when the season it
@@ -63,35 +48,38 @@ message Keyframe {
 // finished recording from one whose writer is still running or died mid-flush
 // - the framing alone cannot, since both simply end after a valid chunk.
 message Footer {
-    uint64 timestamp = 1;
-
     // Pixel changes recorded across every Delta in the file. Deliberately not
-    // a chunk count and deliberately not counting Keyframe pixels: a keyframe
-    // restates pixels that were already counted when their delta was written.
-    uint64 total_pixels_placed = 2;
+    // a chunk count: it counts placements, and a recording is nothing but the
+    // Deltas that carry them.
+    uint64 total_pixels_placed = 1;
 
     // xxHash64 (seed 0) over the canvas as of this footer, digesting every
-    // non-blank pixel sorted by canonical (y, x) as a 12-byte little-endian
-    // record: int32 canonical_x, int32 canonical_y, uint32 color (0x00RRGGBB).
+    // non-blank pixel sorted by (y, x) as a 12-byte little-endian record:
+    // int32 x, int32 y, uint32 color (0x00RRGGBB).
     //
-    // Canonical rather than raw ids on purpose - an id is y * width + x, so
-    // hashing ids would give the same physical artwork a different digest
-    // either side of a resize.
+    // The coordinates are the pixels' own, which is what makes the same
+    // artwork digest the same either side of a resize. That used to need
+    // saying, back when a pixel was addressed by an offset into the canvas.
     //
     // Non-cryptographic: this catches a reader implementation (Go, C, the
     // TypeScript writer) that disagrees about what the file means, not an
     // attacker who is free to rewrite the footer along with the chunks.
-    uint64 canvas_checksum = 3;
+    uint64 canvas_checksum = 2;
 }
 
 message Header {
+    // The compatibility gate, and load-bearing as of the coordinate change:
+    // a reader MUST refuse a version it does not know. Before that it was a
+    // diagnostic nothing branched on, which left an older binary free to read
+    // a newer file and lay every pixel out against an addressing the file no
+    // longer uses - wrong, and only visibly so once somebody watched the
+    // render.
     uint32 version = 1;
 
-    // Retired with record.v1. The canvas size lives on the first Keyframe and
-    // nowhere else - it is the only chunk that can express a size at all, and
-    // therefore the only one that can express a mid-recording resize. A header
-    // carrying a size is a pre-v5 file; readers reject it rather than guessing
-    // which of the two to believe.
+    // Retired with record.v1. The canvas' window lives on Resize chunks and
+    // nowhere else, because it can change mid-recording and a header cannot.
+    // A header carrying a size is a pre-v5 file; readers reject it rather than
+    // guessing which of the two to believe.
     reserved 2, 3;
     reserved "width", "height";
 
@@ -108,11 +96,51 @@ message Header {
 }
 
 message RecordingChunk {
-    reserved 2;
+    // Four kinds, and a recording is only ever these: who this file is, where
+    // the canvas is, what changed, and that the season is over.
+    //
+    // There used to be a fifth. `Keyframe` restated the whole canvas, and once
+    // a resize stopped needing that, nothing wrote one - it survived as a
+    // capability no writer produced and no reader could test against real
+    // data. What it did still do was carry an inexactness: its pixels came
+    // back bounded by the moment it was written wherever it could not offset
+    // them, and it was the last thing in the format that could produce a
+    // bound at all. A snapshot beside the recording does the same job with
+    // absolute times and no ceiling (see modules/canvas/recover.proto), which
+    // left keeping this a choice between a dead branch and an exact history.
+    //
+    // Numbers close up rather than reserving the hole. What protects a reader
+    // here is the version gate, not a gap in the numbering - the same reason
+    // field 2 could be reused after the original prototype left it reserved.
+    //
+    // The payload keeps 5 through 9 to grow into, which is why `timestamp`
+    // sits at 10 rather than next to them. That is not a guess about what
+    // arrives - guessing the *shape* of a future message is what every break
+    // in this format's history has cost us - it is only a choice of numbers,
+    // and it is free: a tag is a varint over `(field << 3) | wire_type`, so
+    // everything up to 15 costs one byte and 10 costs exactly what 5 did.
     oneof payload {
         Header header = 1;
-        Keyframe keyframe = 3;
-        Delta delta = 4;
-        Footer footer = 5;
+        Resize resize = 2;
+        Delta delta = 3;
+        Footer footer = 4;
     }
+
+    // When this chunk was written, in epoch milliseconds.
+    //
+    // On the chunk rather than on each payload, where it used to be repeated
+    // five times over. Every chunk has one, and a field every member of a
+    // union carries belongs to the union - but the reason it moved is that a
+    // reader can now ask *when* without asking *what*. Walking a season to
+    // build an index of times against byte offsets no longer means decoding
+    // the payload at every step.
+    //
+    // Zero means unknown, which is the only honest reading of a chunk that
+    // never carried one; readers do not treat it as the epoch.
+    //
+    // `Header.started_at` is deliberately not this. That is the *season's*
+    // start; this is when the header was written, and a recording rolled
+    // mid-season - after a seal, or after a crash - has the two several days
+    // apart. Until now there was nowhere to say so.
+    uint64 timestamp = 10;
 }

@@ -35,36 +35,29 @@ func runInfo(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	header, initialKf, width, height, err := format.ReadHeader(reader)
+	header, opening, openedAt, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
 
 	type resizeEvent struct {
-		ts               uint64
-		width, height    uint32
-		originX, originY uint32
+		ts     uint64
+		window format.Window
 	}
 
-	initialOriginX, initialOriginY := format.KeyframeOrigin(initialKf)
-	resizes := []resizeEvent{{
-		ts:      initialKf.Timestamp,
-		width:   width,
-		height:  height,
-		originX: initialOriginX,
-		originY: initialOriginY,
-	}}
+	resizes := []resizeEvent{{ts: openedAt, window: opening}}
 
 	digest := canvas.NewDigest()
-	digest.ApplyKeyframe(initialKf)
+	digest.Reframe(opening)
 
-	var keyframes, deltas, chunkCount int
+	var deltas, chunkCount int
 	// Pixel changes across deltas, which is what Footer.total_pixels_placed
-	// counts - keyframes restate pixels their delta already counted.
+	// counts - and a recording is nothing but the deltas that carry them.
 	var placed uint64
 	var lastTs uint64
 
 	var footer *ore.Footer
+	var sealedAt uint64
 	// Chunks after the one that claimed to be last. A sealed recording has
 	// none, and anything here means something wrote past the seal.
 	var afterFooter int
@@ -91,36 +84,29 @@ func runInfo(args []string) error {
 		}
 
 		switch {
-		case chunk.GetKeyframe() != nil:
-			kf := chunk.GetKeyframe()
-			keyframes++
-			lastTs = kf.Timestamp
+		case chunk.GetResize() != nil:
+			resize := chunk.GetResize()
+			lastTs = chunk.Timestamp
 
-			if format.IsResize(kf) {
-				originX, originY := format.KeyframeOrigin(kf)
+			resizes = append(resizes, resizeEvent{
+				ts:     chunk.Timestamp,
+				window: format.ReadWindow(resize),
+			})
 
-				resizes = append(resizes, resizeEvent{
-					ts:      kf.Timestamp,
-					width:   *kf.Width,
-					height:  *kf.Height,
-					originX: originX,
-					originY: originY,
-				})
-			}
-
-			digest.ApplyKeyframe(kf)
+			digest.ApplyResize(resize)
 
 		case chunk.GetDelta() != nil:
 			delta := chunk.GetDelta()
 			deltas++
-			lastTs = delta.Timestamp
+			lastTs = chunk.Timestamp
 			placed += uint64(len(delta.Changes))
 
 			digest.ApplyDelta(delta)
 
 		case chunk.GetFooter() != nil:
 			footer = chunk.GetFooter()
-			lastTs = footer.Timestamp
+			lastTs = chunk.Timestamp
+			sealedAt = chunk.Timestamp
 		}
 	}
 
@@ -137,12 +123,11 @@ func runInfo(args []string) error {
 		fmt.Printf("Scheduled end: %d\n", *header.EndsAt)
 	}
 	currentWidth, currentHeight := digest.Size()
-	originX, originY := digest.Origin()
+	minX, minY := digest.Corner()
 
-	fmt.Printf("Initial size:  %dx%d\n", width, height)
+	fmt.Printf("Initial size:  %dx%d\n", opening.Width, opening.Height)
 	fmt.Printf("Current size:  %dx%d\n", currentWidth, currentHeight)
-	fmt.Printf("Origin:        %d,%d\n", originX, originY)
-	fmt.Printf("Keyframes:     %d (excluding initial)\n", keyframes)
+	fmt.Printf("Corner:        %d,%d\n", minX, minY)
 	fmt.Printf("Deltas:        %d\n", deltas)
 	fmt.Printf("Pixel changes: %d\n", placed)
 	fmt.Printf("Last ts:       %d\n", lastTs)
@@ -158,12 +143,13 @@ func runInfo(args []string) error {
 	if len(resizes) > 1 {
 		fmt.Printf("Resizes:       %d\n", len(resizes)-1)
 		for i, r := range resizes {
-			fmt.Printf("  [%d] %dx%d origin %d,%d @ ts=%d\n",
-				i+1, r.width, r.height, r.originX, r.originY, r.ts)
+			fmt.Printf("  [%d] %dx%d at %d,%d @ ts=%d\n",
+				i+1, r.window.Width, r.window.Height,
+				r.window.MinX, r.window.MinY, r.ts)
 		}
 	}
 
-	printSeal(footer, digest, placed, afterFooter)
+	printSeal(footer, sealedAt, digest, placed, afterFooter)
 
 	return nil
 }
@@ -179,13 +165,19 @@ here means Go and the TypeScript writer disagree about what the file means,
 which is worth finding out from a one-second command rather than from a
 rendered video months later.
 */
-func printSeal(footer *ore.Footer, digest *canvas.Digest, placed uint64, afterFooter int) {
+func printSeal(
+	footer *ore.Footer,
+	sealedAt uint64,
+	digest *canvas.Digest,
+	placed uint64,
+	afterFooter int,
+) {
 	if footer == nil {
 		fmt.Printf("Sealed:        no (still being written, or the writer was interrupted)\n")
 		return
 	}
 
-	fmt.Printf("Sealed:        yes @ ts=%d\n", footer.Timestamp)
+	fmt.Printf("Sealed:        yes @ ts=%d\n", sealedAt)
 
 	fmt.Printf("  pixels:      %d recorded", footer.TotalPixelsPlaced)
 	if footer.TotalPixelsPlaced == placed {

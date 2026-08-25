@@ -3,41 +3,41 @@ package canvas
 import (
 	"testing"
 
+	"github.com/pixelate-it/molten/format"
 	ore "github.com/pixelate-it/molten/ore"
 )
 
-func u32(v uint32) *uint32 { return &v }
 func u64(v uint64) *uint64 { return &v }
 
-func pixel(id, colour uint32) *ore.PixelData {
-	return &ore.PixelData{Id: id, Color: colour}
+func pixel(x, y int32, colour uint32) *ore.PixelData {
+	return &ore.PixelData{X: x, Y: y, Color: colour}
 }
 
-func placed(id, colour uint32, author uint64) *ore.PixelData {
-	return &ore.PixelData{Id: id, Color: colour, Author: u64(author)}
+func placed(x, y int32, colour uint32, author uint64) *ore.PixelData {
+	return &ore.PixelData{X: x, Y: y, Color: colour, Author: u64(author)}
 }
 
 /*
 The property the whole checksum design exists for.
 
-An expansion moves every pixel's local coordinate without moving the artwork,
-so a digest over raw ids would change purely because the width did. Canonical
-coordinates are what make the two agree - and what lets a second
-implementation, replaying the same file, arrive at the same number.
+A resize moves the canvas around the artwork without moving the artwork, so a
+digest over slots in the buffer would change purely because the width did.
+Hashing the pixels' own coordinates is what makes the two agree - and what lets
+a second implementation, replaying the same file, arrive at the same number.
 */
 func TestSumIsStableAcrossAResize(t *testing.T) {
-	// 4x4, origin 0,0 - artwork at local (1,1) and (2,3)
+	// 4x4 starting on the origin, artwork at (1,1) and (2,3)
 	before := NewDigest()
-	before.Resize(4, 4, 0, 0)
-	before.Apply(placed(1+1*4, 0xff0000, 7))
-	before.Apply(placed(2+3*4, 0x00ff00, 7))
+	before.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	before.Apply(placed(1, 1, 0xff0000, 7))
+	before.Apply(placed(2, 3, 0x00ff00, 7))
 
-	// grown to 8x8 anchored so the origin moved to (2,2): the same artwork now
-	// lives at local (3,3) and (4,5), i.e. canonical (1,1) and (2,3).
+	// grown to 8x8 away from the artwork, so the canvas now reaches two pixels
+	// past where the season started. The artwork is where it always was.
 	after := NewDigest()
-	after.Resize(8, 8, 2, 2)
-	after.Apply(placed(3+3*8, 0xff0000, 7))
-	after.Apply(placed(4+5*8, 0x00ff00, 7))
+	after.Reframe(format.Window{Width: 8, Height: 8, MinX: -2, MinY: -2})
+	after.Apply(placed(1, 1, 0xff0000, 7))
+	after.Apply(placed(2, 3, 0x00ff00, 7))
 
 	if before.Sum() != after.Sum() {
 		t.Fatalf("same artwork hashed differently either side of a resize: %016x vs %016x",
@@ -48,12 +48,12 @@ func TestSumIsStableAcrossAResize(t *testing.T) {
 // Different artwork must not collide, or the check above proves nothing.
 func TestSumDistinguishesArtwork(t *testing.T) {
 	a := NewDigest()
-	a.Resize(4, 4, 0, 0)
-	a.Apply(placed(5, 0xff0000, 7))
+	a.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	a.Apply(placed(1, 1, 0xff0000, 7))
 
 	b := NewDigest()
-	b.Resize(4, 4, 0, 0)
-	b.Apply(placed(5, 0xff0001, 7))
+	b.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	b.Apply(placed(1, 1, 0xff0001, 7))
 
 	if a.Sum() == b.Sum() {
 		t.Fatal("a one-bit colour difference hashed the same")
@@ -67,19 +67,19 @@ nobody's name on it is skipped, white that somebody placed is not.
 */
 func TestSumCountsAttributedWhiteAndSkipsBlank(t *testing.T) {
 	blank := NewDigest()
-	blank.Resize(4, 4, 0, 0)
+	blank.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
 
 	untouched := NewDigest()
-	untouched.Resize(4, 4, 0, 0)
-	untouched.Apply(pixel(5, BlankColour)) // white, no author, no tag
+	untouched.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	untouched.Apply(pixel(1, 1, BlankColour)) // white, no author, no tag
 
 	if blank.Sum() != untouched.Sum() {
 		t.Error("an unattributed white pixel is canvas, not artwork - it must not be digested")
 	}
 
 	attributed := NewDigest()
-	attributed.Resize(4, 4, 0, 0)
-	attributed.Apply(placed(5, BlankColour, 7))
+	attributed.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	attributed.Apply(placed(1, 1, BlankColour, 7))
 
 	if attributed.Sum() == blank.Sum() {
 		t.Error("white somebody deliberately placed is artwork and must be digested")
@@ -90,69 +90,83 @@ func TestSumCountsAttributedWhiteAndSkipsBlank(t *testing.T) {
 // genuinely clears it, and the writer records it that way.
 func TestApplyClearsAttribution(t *testing.T) {
 	cleared := NewDigest()
-	cleared.Resize(4, 4, 0, 0)
-	cleared.Apply(placed(5, BlankColour, 7))
-	cleared.Apply(pixel(5, BlankColour))
+	cleared.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	cleared.Apply(placed(1, 1, BlankColour, 7))
+	cleared.Apply(pixel(1, 1, BlankColour))
 
 	blank := NewDigest()
-	blank.Resize(4, 4, 0, 0)
+	blank.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
 
 	if cleared.Sum() != blank.Sum() {
 		t.Error("a repaint with no author must clear the attribution, leaving blank canvas")
 	}
 }
 
-// A resize keyframe restates everything that survives, so the digest has to
-// start from blank - anything left over from the old size is not artwork.
-func TestApplyKeyframeResizesAndAdoptsOrigin(t *testing.T) {
+// A Resize says only where the canvas now is; everything inside it keeps its
+// coordinate and comes along.
+func TestApplyResizeMovesTheWindowAndKeepsTheArtwork(t *testing.T) {
 	d := NewDigest()
-	d.Resize(4, 4, 0, 0)
-	d.Apply(placed(5, 0xff0000, 7))
+	d.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
+	d.Apply(placed(1, 1, 0xff0000, 7))
 
-	resized := d.ApplyKeyframe(&ore.Keyframe{
-		Width: u32(8), Height: u32(8), OriginX: u32(2), OriginY: u32(2),
+	d.ApplyResize(&ore.Resize{
+		Width: 8, Height: 8, MinX: -2, MinY: -2,
 	})
 
-	if !resized {
-		t.Fatal("a keyframe carrying a size is a resize")
-	}
-
 	w, h := d.Size()
-	x, y := d.Origin()
-	if w != 8 || h != 8 || x != 2 || y != 2 {
-		t.Fatalf("got %dx%d origin %d,%d, want 8x8 origin 2,2", w, h, x, y)
+	x, y := d.Corner()
+	if w != 8 || h != 8 || x != -2 || y != -2 {
+		t.Fatalf("got %dx%d at %d,%d, want 8x8 at -2,-2", w, h, x, y)
 	}
 
-	blank := NewDigest()
-	blank.Resize(8, 8, 2, 2)
-	if d.Sum() != blank.Sum() {
-		t.Error("the pixel from before the resize survived it")
+	/* Carried across, not blanked away: the pixel at (1, 1) is inside the new
+	 * window, so it is still there and still counted. That is the whole reason
+	 * a Resize can carry no pixels. */
+	kept := NewDigest()
+	kept.Reframe(format.Window{Width: 8, Height: 8, MinX: -2, MinY: -2})
+	kept.Apply(placed(1, 1, 0xff0000, 7))
+
+	if d.Sum() != kept.Sum() {
+		t.Error("the pixel from before the resize should have survived it")
 	}
 }
 
-// An unsized keyframe is not a resize, and must not blank anything.
-func TestApplyKeyframeWithoutSizeIsNotAResize(t *testing.T) {
+// A cut destroys what falls outside, and every reader has to drop it itself -
+// under the old scheme the resize keyframe simply omitted it.
+func TestDigestReframeDropsWhatFallsOutside(t *testing.T) {
 	d := NewDigest()
-	d.Resize(4, 4, 0, 0)
+	d.Reframe(format.Window{Width: 8, Height: 8})
+	d.Apply(placed(1, 1, 0xff0000, 7))
+	d.Apply(placed(6, 6, 0x00ff00, 7))
 
-	if d.ApplyKeyframe(&ore.Keyframe{Pixels: []*ore.PixelData{placed(5, 0xff0000, 7)}}) {
-		t.Fatal("a keyframe with no size is not a resize")
-	}
+	// Keep the bottom-right quadrant: (1, 1) is gone, (6, 6) survives.
+	d.Reframe(format.Window{Width: 4, Height: 4, MinX: 4, MinY: 4})
 
-	w, h := d.Size()
-	if w != 4 || h != 4 {
-		t.Fatalf("got %dx%d, want the size left alone", w, h)
+	kept := NewDigest()
+	kept.Reframe(format.Window{Width: 4, Height: 4, MinX: 4, MinY: 4})
+	kept.Apply(placed(6, 6, 0x00ff00, 7))
+
+	if d.Sum() != kept.Sum() {
+		t.Error("a pixel outside the new window must be dropped")
 	}
 }
 
-// Out-of-range ids are dropped rather than panicking: a truncated or
-// mis-widthed recording must not take the reader down with it.
-func TestApplyIgnoresOutOfRangeIds(t *testing.T) {
+// Coordinates off the canvas are dropped rather than panicking: a truncated
+// recording, or one whose corner this reader got wrong, must not take it down.
+func TestApplyIgnoresCoordinatesOffTheCanvas(t *testing.T) {
 	d := NewDigest()
-	d.Resize(4, 4, 0, 0)
+	d.Reframe(format.Window{Width: 4, Height: 4, MinX: 0, MinY: 0})
 
 	blank := d.Sum()
-	d.Apply(placed(9999, 0xff0000, 7))
+
+	d.Apply(placed(9999, 9999, 0xff0000, 7))
+	// Negative, which is a real coordinate elsewhere but not on this canvas -
+	// and the case a single check against the buffer length would let through
+	// as a wrap onto some other pixel.
+	d.Apply(placed(-1, 0, 0xff0000, 7))
+	d.Apply(placed(0, -1, 0xff0000, 7))
+	// One column past the right edge, which is a valid slot one row down.
+	d.Apply(placed(4, 0, 0xff0000, 7))
 
 	if d.Sum() != blank {
 		t.Error("a pixel outside the canvas must be dropped")

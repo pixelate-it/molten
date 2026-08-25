@@ -48,33 +48,54 @@ them:
   of it.
 
 A length of `0`, or one past **64 MiB** (`maxChunkSize`), is treated as
-corruption rather than as a large chunk. Both readers agree on that number, and
-it is a real constraint on the writer — see _keyframes_ below.
+corruption rather than as a large chunk. Both readers agree on that number. It
+used to be a real constraint on the writer, because a resize had to fit a whole
+painted canvas into one chunk; nothing the writer emits comes close any more.
 
 ### Chunk order
 
 ```
 Header
-Keyframe   (sized — establishes the canvas dimensions)
+Resize     (the opening window — size and position)
 Delta
 Delta
-Keyframe   (sized — a resize, carries the whole canvas)
+Resize     (an expansion, or a mode cutting the canvas down)
 Delta
 ...
 Footer     (only once the recording is finished)
 ```
 
-**There are deliberately no periodic keyframes.** They were tried and removed:
-a renderer consumes deltas anyway, and repeated full-canvas snapshots dominated
-the file size for something nothing read. Every keyframe still in the format is
-a _sized_ one — the opening one and one per canvas expansion. Consequently
-`molten` treats **any** sized keyframe as a resize: it rebuilds its image from
-scratch and cuts a new video segment.
+**A recording is a pure log of what happened.** Nothing in it restates the
+canvas: a `Resize` says where the canvas now is, a `Delta` says what changed,
+and a reader that has applied both holds the same canvas the writer had.
 
-The cost of having no periodic keyframes is that seeking to time _T_ means
-replaying from the start. That is the trade, and it is why a derived,
-rebuildable snapshot index is the obvious next thing to build — it belongs
-beside the file, never in it.
+That is new as of `v7`, and it is the single biggest thing in the format. A
+resize used to be a `Keyframe` carrying every painted pixel, because a pixel was
+addressed by an offset *into* the canvas and every offset moved when the canvas
+did — so the reader had to be handed the whole thing again. Measured on a real
+200×200 season with 38 expansions:
+
+| chunk    |   count | bytes    | share     |
+| -------- | ------: | -------- | --------- |
+| keyframe |      39 | 5.05 MB  | **91.4%** |
+| delta    |    1735 | 0.47 MB  | 8.6%      |
+
+91% of the file was the same artwork written out over and over. Now that a
+pixel names a place on a plane rather than a slot in a buffer, a resize moves
+the window and the contents come along, and the chunk that says so is twenty
+bytes.
+
+**And there is no keyframe chunk at all.** Periodic ones were tried and removed
+first, for the same reason: a renderer consumes deltas anyway. The type outlived
+them as a capability nothing produced — and what it still did was carry an
+inexactness, since a pixel it could not offset came back bounded by the moment
+it was written. It was the last thing in the format able to produce a bound.
+A snapshot beside the recording does the same job with absolute times and no
+ceiling, so keeping it was a choice between a dead branch and an exact history.
+
+The cost of having nothing to restate the canvas is that seeking to time _T_
+means replaying from the start. That is the trade, and it is why a derived,
+rebuildable snapshot belongs beside the file — never in it.
 
 ### `Header`
 
@@ -82,25 +103,29 @@ One, first, always. Carries what is fixed for the whole recording: format
 `version`, the season's `name`, `started_at`, `game_id`, `cooldown`, `ends_at`.
 
 Notably **not** width and height. Those can change mid-recording, so they live
-on the first `Keyframe` instead, and `format.ReadHeader` refuses a file whose
-second chunk is not a sized keyframe.
+on `Resize` chunks instead, and `format.ReadHeader` refuses a file whose second
+chunk is not one.
 
 `record.v1` (`.pbr`) put the size on the header instead. Those fields are
-**reserved** now, so such a file has nowhere left to declare a size and is
-refused rather than guessed at — convert it first.
+**reserved** now, so such a file has nowhere left to declare a size — though in
+practice the version check refuses it first, and says something more useful.
 
-### `Keyframe`
+### `Resize`
 
-A full-canvas snapshot: `timestamp`, `pixels`, and — when it is a sizing or
-resize keyframe — `width`, `height`, `origin_x`, `origin_y`.
+The canvas' window: `timestamp`, `width`, `height`, `min_x`, `min_y`.
 
-- **Sparse.** Pixels that are white with nobody's name on them are omitted,
-  because a resize fills the new canvas with white anyway.
-- **Whole.** A resize keyframe must carry everything that survives the resize,
-  because the reader blanks its image first.
-- **One chunk.** Which is where the 64 MiB ceiling bites: a fully-painted
-  canvas has to fit. At roughly 34 bytes per `PixelData` that runs out near
-  ~1.97M pixels, which is why the backend caps a canvas at 1.5M.
+Written as chunk 2 of every recording, and again on every change of size or
+position. **It carries no pixels.**
+
+- **Both directions.** A canvas grows and, under a mode that plays with the
+  size, shrinks. A cut destroys the pixels outside the new window, and every
+  reader has to drop them itself — under the old scheme they were simply
+  omitted from the keyframe, which did the same job by accident.
+- **A window, not a delta of one.** It states where the canvas is, not how far
+  it moved, so a reader that joins mid-file or seeks backwards needs no
+  history to interpret it.
+- **The only resize signal.** `molten` starts a new output segment on each,
+  because an encoder cannot change frame size mid-stream.
 
 ### `Delta`
 
@@ -123,52 +148,79 @@ interrupted one: a clean shutdown, a redeploy and a crash all leave a file that
 simply stops after a valid chunk. The footer is the difference. A writer that
 finds one on a file it was about to append to knows to leave the file alone.
 
-`total_pixels_placed` counts pixel changes across deltas only — a keyframe
-restates pixels their delta already counted.
+`total_pixels_placed` counts pixel changes across deltas, which is all a
+recording carries.
 
 ---
 
 ## Coordinates
 
-### `PixelData.id` is local, and local changes
+### A pixel names a place, not a slot
 
-A pixel's position is `y * width + x`, where `width` is **whichever one was in
-force when that chunk was written** — i.e. from the nearest preceding sized
-keyframe, not the recording's final width.
+`PixelData.x` and `PixelData.y` are **signed coordinates on a fixed plane**.
+The origin is the canvas' top-left corner as the season started, and it never
+moves for the life of the recording.
 
-This is the single easiest thing to get wrong when writing a new reader.
-Decoding a whole file against one global width silently misplaces every pixel
-written before the last resize. Carry the width forward per keyframe.
+That is the whole of it. The same pair means the same pixel in every chunk of
+the file, before and after any number of resizes — no width to carry forward,
+nothing to convert, nothing a reader can get subtly wrong.
 
-### Canonical coordinates and `origin`
+It was not always so. Up to `v5` a pixel carried `id = y * width + x` against
+whichever width was in force when its chunk was written, plus an `origin` on
+each keyframe to convert back to something stable. Decoding such a file against
+one global width silently misplaced every pixel written before the last resize,
+and that was the single easiest thing to get wrong in a new reader.
 
-A resize is grow-only, and it grows the canvas _around_ the existing artwork
-according to an anchor. So unless the anchor was top-left, every pixel gets a
-new `(x, y)` while nothing has actually moved: a 100×100 canvas grown to
-200×200 anchored centre puts what was at `(10, 10)` at `(60, 60)`.
+Everything else on this page follows from the change. A resize can carry no
+pixels because none of them moved; a rollback is a delta replay with one
+author's placements left out, and no keyframe to filter back out afterwards;
+and the 64 MiB chunk ceiling stopped constraining how large a canvas may be.
 
-`origin_x`/`origin_y` on each keyframe are the accumulated anchor offset:
+### The canvas is a window, and the window moves
+
+A resize grows the canvas *around* the artwork according to an anchor, so the
+artwork does not move — the canvas' own corner does. `min_x`/`min_y` on a
+`Resize` say where that corner is, in the same coordinates the pixels use:
 
 ```
-canonical = local - origin
-local     = canonical + origin
+column = x - min_x
+row    = y - min_y
 ```
 
-Canonical coordinates are fixed to the _content_, so they are the ones that
-survive an expansion — which is what a permalink, a client-side stencil, or a
-cross-implementation checksum has to be expressed in. The anchor itself is
-never recorded, only its result, so a reader cannot re-derive this: it has to
-read it off the keyframe.
+A size alone never located a canvas. That was invisible while a pixel carried
+an offset *into* the canvas, since an offset has nowhere else to point; now
+that a pixel names a place on the plane, the chunk that changes the canvas has
+to say which part of the plane it covers.
 
 Two things worth stating plainly:
 
-- The **origin** is never negative. Grow-only plus an anchor that only adds
-  space around the old content means it can only move away from local `(0, 0)`.
-- A **canonical coordinate** absolutely can be. Anything painted into space an
-  expansion added on the left or the top has `local < origin`.
+- **`min_x`/`min_y` go negative**, as soon as a season is expanded leftwards or
+  upwards. They are a coordinate, not a distance.
+- **Zero is the opening value**, which is right for every season: the origin is
+  *defined* as the corner the canvas started on.
 
-A recording written before this field has no origin; zero is the only
-defensible reading, and it is correct for every recording that never resized.
+### Versions are checked, and this is why
+
+`Header.version` was decorative until `v6` — every earlier break was caught
+structurally, by a file having no sized opening keyframe. `v5` and `v6` are
+structurally identical: same chunks, same field numbers, same everything. They
+differ only in what the two numbers inside a `PixelData` mean.
+
+Nothing in the bytes gives that away, so `format.ReadHeader` refuses a version
+it does not know (`ErrUnknownVersion`) rather than reading a season and laying
+every pixel out wrong. A wrong render is the kind of failure nobody notices
+until they watch the video.
+
+The gate paid for itself immediately: `v7` put a `Resize` on field 2 of a
+`RecordingChunk`, a number that had been `reserved` since the first prototype.
+Reusing a reserved number is normally how you produce a file that decodes into
+the wrong message — it is safe here only because no pre-`v7` chunk is ever
+handed to that dispatch.
+
+`v11` is the same kind of break as `v5`→`v6`: it drops the presence bit from
+`PixelData.offset`, so an older file's *unset* offset decodes as a perfectly
+valid `0` and every undated pixel silently claims to have been painted at the
+flush. Structurally identical, semantically not — exactly what the gate is for.
 
 ### `PixelData.offset`
 
@@ -182,42 +234,49 @@ interval, it costs 2–3 bytes as a varint where an absolute epoch-ms `uint64`
 costs 7 — and the top 40 bits of that would be identical for every pixel in the
 file.
 
-Keyframes carry it too. A keyframe restates the whole canvas, so without
-per-pixel offsets an expansion would flatten a season's placement times onto
-the moment it happened.
+Only deltas carry it, because only deltas carry pixels. A restatement of the
+canvas that could not say when a pixel was painted flattened that part of the
+season's history onto the moment it was written — resizes used to do exactly
+that, and keyframes after them. Both are gone.
 
-**Writers MUST set it whenever the placement time is known and differs from the
-chunk's timestamp, and MUST leave it unset otherwise.** So unset means exactly
-one thing — "no better information than the chunk's own timestamp" — and covers
-every case where there is none: a time that was never recorded (a pre-v3 file,
-or a pixel a moderator rollback restored, whose real paint time is long gone), a
-time that is only a _bound_, and a clock that moved backwards between the
-placement and the flush.
+**Zero means the chunk's timestamp, and there is nothing else it can mean.**
+That is the whole of the rule, and it is only true because a `Delta` is now the
+only chunk carrying pixels and a `Delta`'s timestamp is a real instant. Falling
+back to it is not a guess: the pixel was on the canvas by then, and the flush is
+the nearest thing to a time anyone recorded.
 
-It stays `optional` deliberately, and must. Proto3 implicit presence would
-default it to `0`, and `0` is precisely "placed at the chunk's timestamp" — so
-the cases above would become indistinguishable from an exact placement, which is
-a claim the writer cannot make. Nothing is saved by it either: an
-implicit-presence scalar equal to `0` is not serialized at all.
+The field used to be `optional`, so that "no better information" could be told
+apart from "exactly at the timestamp". That distinction belonged to the chunk
+that no longer exists. A keyframe restated the canvas and handed its own
+timestamp down as an **upper bound** for pixels it could not date, and unset was
+how a reader knew to treat one as a bound rather than a placement. With
+keyframes gone, nothing in the format produces a bound — so unset and zero
+resolve to the identical instant, and the presence bit distinguished nothing.
 
-Readers must not read unset as `0`. Fall back to the chunk's timestamp and carry
-the fact that it is a bound.
+A writer that genuinely does not know when a pixel was painted — a moderator
+rollback restoring artwork whose original time is long gone — writes `0` and
+says the pixel was there at the flush. That is true, and it is the strongest
+thing anybody can say about it.
+
+Implicit presence also stops costing the two bytes an explicit zero needed:
+proto3 does not serialize a scalar equal to its default.
 
 ### `Footer.canvas_checksum`
 
-xxHash64, seed 0, over every non-blank pixel sorted by canonical `(y, x)`, each
-digested as a 12-byte little-endian record:
+xxHash64, seed 0, over every non-blank pixel sorted by `(y, x)`, each digested
+as a 12-byte little-endian record:
 
 ```
-int32  canonical_x
-int32  canonical_y
+int32  x
+int32  y
 uint32 colour        (0x00RRGGBB)
 ```
 
-Canonical rather than raw ids, or the same physical artwork would hash
-differently either side of a resize purely because the width changed. "Non-blank"
-means what a keyframe means by it — white with no author and no tag is skipped —
-so a reader that rebuilt the canvas from a keyframe can reproduce the digest.
+The coordinates are the pixels' own, which is what makes the same artwork hash
+the same either side of a resize — that used to need saying, back when a pixel
+was addressed by an offset into the canvas. "Non-blank" means white with no
+author and no tag is skipped, so a reader holding only what the file described
+can reproduce the digest without inventing the pixels nobody painted.
 
 It is **not** cryptographic and is not trying to be. It catches a second
 implementation that decoded the file differently; it does nothing against
@@ -229,18 +288,24 @@ someone who can rewrite the footer along with the chunks.
 
 The minimum a correct reader does:
 
-1. Read chunk 1. It must be a `Header`.
-2. Read chunk 2. It must be a `Keyframe`, and it must carry `width`/`height` —
-   that is the only place a canvas size is ever declared.
+1. Read chunk 1. It must be a `Header`, and its `version` must be one you
+   know. Refuse it otherwise — see _Versions are checked_ above.
+2. Read chunk 2. It must be a `Resize`; that is the only place a canvas window
+   is ever declared.
 3. For each chunk after that:
-    - **sized keyframe** → blank the canvas at the new size, adopt its
-      `origin_x`/`origin_y`, apply its pixels, cut a new output segment;
-    - **unsized keyframe** → apply its pixels;
+    - **resize** → move what you hold onto the new window, dropping anything
+      that falls outside it, and cut a new output segment;
     - **delta** → apply its changes, using each pixel's `offset` for its real
       time;
     - **footer** → the recording is complete; stop.
 4. Stop at the first chunk that fails to parse, and treat everything from there
    on as absent.
+
+Step 3's first case is the one worth care. **Move, do not rebuild:** every
+pixel keeps its coordinate across a resize, so the window changes and the
+contents come along. Clip per axis while you do it — a column past the new
+right edge is still a valid index one row down, so a single bounds test smears
+a cut along the left edge instead of dropping it.
 
 Unknown chunk types are ignored, not errors — the `oneof` is expected to grow.
 
@@ -273,14 +338,13 @@ defer f.Close()
 
 r := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-// enforces steps 1 and 2, and hands back the size the opening keyframe declared
-header, initialKf, width, height, err := format.ReadHeader(r)
+// enforces steps 1 and 2, including the version check, and hands back the
+// opening Resize - whole, because its timestamp starts the season's clock
+header, opening, err := format.ReadHeader(r)
 if err != nil { return err }
 
-// the opening keyframe carries the size, so this sizes the canvas as well as
-// laying down its opening contents
 state := canvas.NewState()
-state.ApplyKeyframe(initialKf)
+state.Reframe(format.ReadWindow(opening))
 
 for {
     chunk, err := r.Next()
@@ -288,10 +352,10 @@ for {
     if err != nil { return err }
 
     switch {
-    case chunk.GetKeyframe() != nil:
-        if state.ApplyKeyframe(chunk.GetKeyframe()) {
-            // a resize: the canvas was blanked at a new size
-        }
+    case chunk.GetResize() != nil:
+        // moves the canvas onto the new window, keeping what is still inside
+        state.ApplyResize(chunk.GetResize())
+        // an encoder cannot change frame size mid-stream: cut a segment here
     case chunk.GetDelta() != nil:
         state.ApplyDelta(chunk.GetDelta())
     case chunk.GetFooter() != nil:
@@ -345,10 +409,10 @@ prints, and what a new reader in another language should be tested against.
 
 ### Two traps the API takes care of
 
-- **Pixel ids are relative to the width in force at the time**, not the
-  recording's final width. Applying chunks in order through a `State` or a
-  `Digest` handles it; decoding a whole file against one global width silently
-  misplaces everything written before the last resize.
+- **The canvas' corner moves, and a pixel's coordinates do not.** Applying
+  chunks in order through a `State` or a `Digest` carries the corner forward
+  for you; assuming the canvas starts at `(0, 0)` draws a leftward-expanded
+  season entirely in the wrong place.
 - **A delta's recorded order is first-touch order, not placement order.**
   `format.PlacementOrder(delta)` returns the pixels in the order they were
   painted, and `format.PlacedAt(chunkTimestamp, pixel)` resolves when one was.
@@ -367,8 +431,8 @@ molten <command> [flags]
 
 ### `molten info -in season.mltn`
 
-Header fields, canvas size and origin, every resize with its timestamp, and
-keyframe/delta/pixel counts. The cheapest way to find out whether a file is what
+Header fields, canvas size and corner, every resize with its timestamp, and
+resize/delta/pixel counts. The cheapest way to find out whether a file is what
 you think it is.
 
 It also **verifies the file against its own footer**, which is the only
@@ -406,7 +470,7 @@ like — quiet nights stay quiet. `activity` shows what was _done_ — every cha
 gets equal screen time regardless of when it happened.
 
 **Resizes cut segments.** Video encoders cannot change frame size mid-stream,
-so each sized keyframe starts a new file: `out.mp4`, `out-2.mp4`, and so on.
+so each `Resize` starts a new file: `out.mp4`, `out-2.mp4`, and so on.
 Stitch them afterwards if you want one video.
 
 `-scale` is checked up front against libx264's 8192-pixel limit, because ffmpeg

@@ -68,17 +68,21 @@ func runRender(args []string) error {
 
 	reader := format.NewChunkReader(bufio.NewReaderSize(f, 64*1024))
 
-	_, initialKf, width, height, err := format.ReadHeader(reader)
+	_, opening, openedAt, err := format.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
 
-	log.Printf("initial canvas size: %dx%d", width, height)
+	log.Printf("initial canvas size: %dx%d", opening.Width, opening.Height)
 
-	// The opening keyframe carries the size, so this both sizes the canvas and
-	// lays down its opening contents.
+	// The opening Resize is what sizes the canvas. It carries no pixels; a
+	// season starts blank, and one that does not says so in Deltas.
 	state := canvas.NewState()
-	state.ApplyKeyframe(initialKf)
+	state.Reframe(opening)
+
+	/* The opening Resize's own timestamp is where the season's clock starts.
+	 * It used to be the opening keyframe's, which was the same instant by a
+	 * different name. */
 
 	mgr := segment.NewManager(*outputPath, *fps).
 		WithEncodeOptions(*scale, extraArgs)
@@ -88,7 +92,7 @@ func runRender(args []string) error {
 	 * refuses at the end of a render rather than the start - which, for a
 	 * season that takes minutes to replay, is a long wait for a failure that
 	 * was knowable up front. */
-	if outW, outH := int(width)*(*scale), int(height)*(*scale); outW > maxEncodeDimension || outH > maxEncodeDimension {
+	if outW, outH := int(opening.Width)*(*scale), int(opening.Height)*(*scale); outW > maxEncodeDimension || outH > maxEncodeDimension {
 		fmt.Fprintf(
 			os.Stderr,
 			"render: -scale %d gives a %dx%d video, past the %d limit libx264 will encode\n",
@@ -97,7 +101,7 @@ func runRender(args []string) error {
 		return errUsage
 	}
 
-	if err := mgr.StartSegment(int(width), int(height)); err != nil {
+	if err := mgr.StartSegment(int(opening.Width), int(opening.Height)); err != nil {
 		return err
 	}
 	defer mgr.Close()
@@ -109,9 +113,9 @@ func runRender(args []string) error {
 	var runErr error
 	switch *mode {
 	case "time":
-		runErr = renderTimeMode(reader, state, initialKf, *speed, *fps, mgr, emit)
+		runErr = renderTimeMode(reader, state, openedAt, *speed, *fps, mgr, emit)
 	case "activity":
-		runErr = renderActivityMode(reader, state, initialKf, *step, mgr, emit)
+		runErr = renderActivityMode(reader, state, *step, mgr, emit)
 	}
 	if runErr != nil {
 		return runErr
@@ -128,7 +132,7 @@ func runRender(args []string) error {
 func renderTimeMode(
 	reader *format.ChunkReader,
 	state *canvas.State,
-	initialKf *ore.Keyframe,
+	openedAt uint64,
 	speed float64,
 	fps int,
 	mgr *segment.Manager,
@@ -163,7 +167,7 @@ func renderTimeMode(
 		return nil
 	}
 
-	if err := advance(initialKf.Timestamp); err != nil {
+	if err := advance(openedAt); err != nil {
 		return err
 	}
 
@@ -182,23 +186,29 @@ func renderTimeMode(
 		}
 
 		switch {
-		case chunk.GetKeyframe() != nil:
-			kf := chunk.GetKeyframe()
-			resized := state.ApplyKeyframe(kf)
-			if resized {
-				if err := mgr.StartSegment(int(state.Width), int(state.Height)); err != nil {
-					return err
-				}
-				if err := emit(); err != nil {
-					return err
-				}
+		case chunk.GetResize() != nil:
+			resize := chunk.GetResize()
+
+			/* An encoder cannot change frame size mid-stream, so a resize is
+			 * where one output segment ends and the next begins. The canvas
+			 * itself is carried across rather than rebuilt - see State.Reframe.
+			 */
+			state.ApplyResize(resize)
+
+			if err := mgr.StartSegment(int(state.Width), int(state.Height)); err != nil {
+				return err
 			}
-			if err := advance(kf.Timestamp); err != nil {
+			if err := emit(); err != nil {
+				return err
+			}
+			if err := advance(chunk.Timestamp); err != nil {
 				return err
 			}
 
 		case chunk.GetDelta() != nil:
-			if err := applyDeltaOverTime(state, chunk.GetDelta(), advance); err != nil {
+			if err := applyDeltaOverTime(
+				state, chunk.Timestamp, chunk.GetDelta(), advance,
+			); err != nil {
 				return err
 			}
 		}
@@ -212,35 +222,28 @@ func renderTimeMode(
 // freeze. Sorting by each pixel's offset recovers the true order and lets
 // frames be emitted *between* placements, which is what makes a slow render
 // look like painting rather than stamping.
-//
-// Recordings written before the offset field carry none, and take the original
-// path exactly - no behaviour change for anything already on disk.
-func applyDeltaOverTime(state *canvas.State, d *ore.Delta, advance func(uint64) error) error {
-	ordered, timed := format.PlacementOrder(d)
-
-	// Nothing to interleave by: keep the original atomic behaviour exactly.
-	if !timed {
-		state.ApplyDelta(d)
-		return advance(d.Timestamp)
-	}
-
-	for _, p := range ordered {
+func applyDeltaOverTime(
+	state *canvas.State,
+	at uint64,
+	d *ore.Delta,
+	advance func(uint64) error,
+) error {
+	for _, p := range format.PlacementOrder(at, d) {
 		// Frames covering the time before this pixel show the canvas without
 		// it, so it appears in the frame after the moment it was painted.
-		if err := advance(format.PlacedAt(d.Timestamp, p)); err != nil {
+		if err := advance(format.PlacedAt(at, p)); err != nil {
 			return err
 		}
 		state.ApplySinglePixel(p)
 	}
 
 	// Then the remainder of the window, up to the flush itself.
-	return advance(d.Timestamp)
+	return advance(at)
 }
 
 func renderActivityMode(
 	reader *format.ChunkReader,
 	state *canvas.State,
-	initialKf *ore.Keyframe,
 	step int,
 	mgr *segment.Manager,
 	emit func() error,
@@ -260,14 +263,11 @@ func renderActivityMode(
 		return nil
 	}
 
+	/* Nothing to lay down first: the opening Resize carries no pixels, and a
+	 * season that starts with artwork on it says so in Deltas like everything
+	 * else. */
 	if err := emit(); err != nil {
 		return err
-	}
-
-	for _, p := range initialKf.Pixels {
-		if err := applyAndMaybeEmit(p); err != nil {
-			return err
-		}
 	}
 
 	chunkCount := 0
@@ -285,16 +285,14 @@ func renderActivityMode(
 		}
 
 		switch {
-		case chunk.GetKeyframe() != nil:
-			kf := chunk.GetKeyframe()
-			resized := state.ApplyKeyframe(kf)
-			if resized {
-				if err := mgr.StartSegment(int(state.Width), int(state.Height)); err != nil {
-					return err
-				}
-				if err := emit(); err != nil {
-					return err
-				}
+		case chunk.GetResize() != nil:
+			state.ApplyResize(chunk.GetResize())
+
+			if err := mgr.StartSegment(int(state.Width), int(state.Height)); err != nil {
+				return err
+			}
+			if err := emit(); err != nil {
+				return err
 			}
 
 		case chunk.GetDelta() != nil:
@@ -302,8 +300,9 @@ func renderActivityMode(
 			 * placement order - a pixel enters the change set the first time
 			 * it is painted and keeps that position however often it is
 			 * repainted. Offsets give the real order. */
-			ordered, _ := format.PlacementOrder(chunk.GetDelta())
-			for _, p := range ordered {
+			for _, p := range format.PlacementOrder(
+				chunk.Timestamp, chunk.GetDelta(),
+			) {
 				if err := applyAndMaybeEmit(p); err != nil {
 					return err
 				}

@@ -33,15 +33,28 @@ var (
 	// ErrNotHeader means the file does not begin with a Header chunk, so it is
 	// not a recording.
 	ErrNotHeader = errors.New("mltm: first chunk is not a Header")
-	// ErrMissingInitialKeyframe means nothing established the canvas size: the
-	// Header was not followed by a Keyframe carrying width and height. A
-	// record.v1 file lands here too, having put the size on the Header, whose
-	// width/height are now reserved.
-	ErrMissingInitialKeyframe = errors.New("mltm: Header is not followed by an initial Keyframe with canvas size")
+	// ErrMissingInitialResize means nothing established the canvas' window: the
+	// Header was not followed by a Resize carrying a size and a corner. Without
+	// it there is nothing to lay pixels into - a pixel names a place on a
+	// plane, and the window is what says which part of that plane exists.
+	ErrMissingInitialResize = errors.New("mltm: Header is not followed by an initial Resize declaring the canvas window")
 	// ErrCorruptChunkLength means a length prefix was zero or above
 	// MaxChunkSize. Both readings are treated as corruption rather than as a
 	// very large chunk.
 	ErrCorruptChunkLength = errors.New("mltm: invalid chunk length, file is corrupt")
+	// ErrUnknownVersion means the Header declares a format version this binary
+	// does not know how to read.
+	//
+	// This is the whole compatibility story as of v6, and it has to be: v5 and
+	// v6 are structurally identical - same chunks, same field numbers - and
+	// differ only in what the two numbers inside a PixelData mean. v5 said
+	// "offset into the canvas", v6 says "coordinate on the plane". Nothing
+	// about the bytes gives that away, so a reader that does not check this
+	// lays a whole season out wrong and renders it without a single complaint.
+	//
+	// Every break before this one was caught structurally instead, which is
+	// why the field was decorative until now.
+	ErrUnknownVersion = errors.New("mltm: unsupported format version")
 )
 
 /*

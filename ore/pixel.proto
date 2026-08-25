@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package molten.ore;
+option go_package = "github.com/pixelate-it/molten/ore";
+
+message PixelData {
+    // Where the pixel is, in the recording's own coordinates: signed, fixed to
+    // the canvas as the recording started, unaffected by any later resize.
+    sint32 x = 1;
+    sint32 y = 2;
+
+    uint32 color = 3;
+    optional uint64 author = 4;
+    optional uint64 tag = 5;
+
+    // Milliseconds *before* the enclosing chunk's timestamp that this pixel
+    // was actually placed.
+    //
+    // A delta is written once per flush and carries every pixel that changed
+    // since the last one, so its own timestamp is the flush - not the moment
+    // any given pixel was painted. Without this a time-based renderer applies
+    // a whole flush window at once, and every pixel in it shares one instant.
+    //
+    // Relative rather than absolute on purpose: the value is bounded by the
+    // flush interval, so it costs 2-3 bytes as a varint where an absolute
+    // epoch-ms uint64 costs 7 - and the top 40 bits of that would be identical
+    // for every pixel in the file.
+    //
+    // Zero means "at the chunk's timestamp", and there is no way to say
+    // anything else - which is the point. A Delta is the only chunk that
+    // carries pixels now, and a Delta's timestamp is a real instant, so
+    // falling back to it is never a guess: the pixel was on the canvas by
+    // then and the flush is the closest thing to a time anyone has.
+    //
+    // It used to be `optional`, so that "no better information" could be
+    // distinguished from "exactly at the timestamp". That distinction existed
+    // for the chunk that no longer does. A Keyframe restated the canvas and
+    // handed its own timestamp down as an *upper bound* for pixels it could
+    // not date, and unset was how a reader knew to treat it as one. With
+    // keyframes gone nothing produces a bound, and unset and zero resolve to
+    // the identical instant - a distinction that distinguishes nothing.
+    //
+    // Implicit presence also stops costing the two bytes an explicit zero
+    // needed, since proto3 does not serialize a scalar equal to its default.
+    uint32 offset = 6;
+}
